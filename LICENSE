@@ -1,0 +1,113 @@
+Drug Design Studio (DDS) — Academic and Non-Commercial License
+Version 1.0 (2026)
+
+Copyright © 2026 Prof. Mahmoud E. Soliman. All rights reserved.
+Developed by Prof. Mahmoud E. Soliman, School of Health Sciences,
+University of KwaZulu-Natal, South Africa.
+
+================================================================================
+
+1. DEFINITIONS
+
+   "Software" means the Drug Design Studio (DDS) application, including its
+   executables, bundled resources, and accompanying documentation, as
+   distributed by the author.
+
+   "Author" means Prof. Mahmoud E. Soliman, the copyright holder.
+
+   "You" means the individual or entity exercising rights under this License.
+
+   "Non-commercial purpose" means use for academic research, teaching, personal
+   study, or evaluation, without any direct or indirect commercial advantage or
+   monetary compensation.
+
+2. GRANT OF LICENSE
+
+   Subject to full compliance with this License, the Author grants You a
+   worldwide, royalty-free, non-exclusive, non-transferable, revocable license
+   to:
+
+   (a) install and use the Software for non-commercial purposes; and
+
+   (b) redistribute the Software, only in its complete and UNMODIFIED form,
+       together with this License and all copyright and attribution notices,
+       for non-commercial purposes and at no charge.
+
+3. RESTRICTIONS
+
+   You may NOT, in whole or in part:
+
+   (a) modify, adapt, translate, or edit the Software, or create derivative
+       works based on it;
+
+   (b) reverse-engineer, decompile, disassemble, or otherwise attempt to derive
+       the source code, except to the limited extent this restriction is
+       expressly prohibited by applicable law;
+
+   (c) use the Software, or any output produced with it, for any commercial,
+       industrial, for-profit, or fee-generating purpose;
+
+   (d) sell, rent, lease, sublicense, or otherwise transfer the Software for a
+       fee, or incorporate it into any commercial product or service;
+
+   (e) remove, alter, or obscure any copyright, trademark, authorship, or other
+       proprietary notices; or
+
+   (f) use the name of the Author or the University of KwaZulu-Natal to endorse
+       or promote products derived from the Software without prior written
+       permission.
+
+   A separate commercial license is required for any use not permitted above.
+   To request one, contact the Author at soliman@ukzn.ac.za.
+
+4. INTELLECTUAL PROPERTY
+
+   The Software is licensed, not sold. All right, title, and interest in and to
+   the Software, including all intellectual property rights, remain with the
+   Author. This License does not grant You any rights other than those
+   expressly stated herein.
+
+5. THIRD-PARTY COMPONENTS
+
+   The Software incorporates third-party open-source components, including
+   AutoDock Vina, RDKit, Open Babel, and Meeko, each of which remains subject to
+   its own respective license. Nothing in this License limits or supersedes the
+   terms applicable to those components.
+
+6. RESEARCH USE ONLY; NO WARRANTY
+
+   The Software is a computational research and educational tool. Its outputs
+   are predictions and may be inaccurate. It is not a medical device and must
+   not be used for clinical, diagnostic, therapeutic, regulatory, or other
+   safety-critical purposes.
+
+   THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+   IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+   FITNESS FOR A PARTICULAR PURPOSE, AND NON-INFRINGEMENT.
+
+7. LIMITATION OF LIABILITY
+
+   TO THE MAXIMUM EXTENT PERMITTED BY LAW, THE AUTHOR SHALL NOT BE LIABLE FOR
+   ANY CLAIM, DAMAGES, OR OTHER LIABILITY, WHETHER IN CONTRACT, TORT, OR
+   OTHERWISE, ARISING FROM, OUT OF, OR IN CONNECTION WITH THE SOFTWARE OR THE
+   USE OR OTHER DEALINGS IN THE SOFTWARE.
+
+8. CITATION
+
+   If the Software contributes to work that is published or presented, You agree
+   to cite it as indicated in the application's "Cite DDS" dialog.
+
+9. TERMINATION
+
+   This License and the rights granted hereunder terminate automatically if You
+   breach any of its terms. Upon termination, You must cease all use of the
+   Software and destroy all copies in Your possession.
+
+10. GOVERNING LAW
+
+   This License is governed by the laws of the Republic of South Africa, without
+   regard to conflict-of-law principles.
+
+================================================================================
+
+For commercial licensing enquiries, contact: soliman@ukzn.ac.za

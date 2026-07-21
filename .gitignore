@@ -1,0 +1,24 @@
+# node / frontend
+node_modules/
+dist/
+
+# python engine
+engine/.venv/
+engine/__pycache__/
+engine/**/__pycache__/
+engine/.env
+
+# packaging / build artifacts
+engine/build/
+engine/dist_pkg/
+engine/dist_dmg/
+engine/dist_installer/
+engine/webdist/
+engine/*.dmg
+engine/*.spec.bak
+
+# engine runtime data
+engine/jobs/
+
+# os
+.DS_Store
