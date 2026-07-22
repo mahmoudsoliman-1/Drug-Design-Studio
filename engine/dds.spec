@@ -51,6 +51,10 @@ datas += [("webdist", "webdist")]
 vina_name = "vina.exe" if sys.platform.startswith("win") else "vina"
 binaries += [("bin/%s" % vina_name, "bin")]
 
+# bundle the AI key (.env is gitignored — key is inside the app, not the public source)
+if _os.path.exists(".env"):
+    datas += [(".env", ".")]
+
 import os
 _icns = "packaging/icon.icns" if os.path.exists("packaging/icon.icns") else None
 _ico = "packaging/icon.ico" if os.path.exists("packaging/icon.ico") else None
