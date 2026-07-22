@@ -156,8 +156,8 @@ export default function InteractionMap2D({ ligand = 'Ligand', pose = 1, affinity
               </g>
             ))}
 
-            <g><rect x={C.x - 46} y={C.y + 124} width="92" height="19" rx="9.5" fill="#0f766e" /><text x={C.x} y={C.y + 137} textAnchor="middle" fontSize="10.5" fontWeight="700" fill="#ffffff">{ligand}</text></g>
-
+            {/* ligand name is shown in the header/subtitle above — no central pill,
+                so it never overlaps the interaction connectors */}
             <Legend x={30} y={H - 84} />
           </svg>
         </div>

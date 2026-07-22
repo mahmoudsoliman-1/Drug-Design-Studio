@@ -59,13 +59,18 @@ def main():
     _wait_ready(port)
 
     import webview
+    from ddsengine.paths import data_dir
+    store = os.path.join(data_dir(), "webview")
+    os.makedirs(store, exist_ok=True)
     webview.create_window(
         "Drug Design Studio",
         "http://127.0.0.1:%d/" % port,
         js_api=_Bridge(),
         width=1440, height=920, min_size=(1100, 720),
     )
-    webview.start()   # blocks on the native GUI loop; returns when the window closes
+    # private_mode=False + a storage_path make localStorage/cookies PERSIST across
+    # launches — otherwise the licence gate (dds_agreed) re-prompts every time.
+    webview.start(private_mode=False, storage_path=store)   # blocks on the native GUI loop
 
 
 if __name__ == "__main__":

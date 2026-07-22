@@ -26,15 +26,27 @@ export function health() {
 export function fetchReceptor(pdbId, opts = {}) {
   return call('/api/receptor/fetch', {
     method: 'POST', headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ pdb_id: pdbId, keep_waters: !!opts.keepWaters, keep_ions: !!opts.keepIons }),
+    body: JSON.stringify({ pdb_id: pdbId, keep_waters: !!opts.keepWaters, keep_ions: !!opts.keepIons, ph: opts.ph ?? 7.4 }),
   })
 }
 
 export function uploadReceptor(file, opts = {}) {
   const fd = new FormData()
   fd.append('file', file)
-  const q = `?keep_waters=${!!opts.keepWaters}&keep_ions=${!!opts.keepIons}`
+  const q = `?keep_waters=${!!opts.keepWaters}&keep_ions=${!!opts.keepIons}&ph=${opts.ph ?? 7.4}`
   return call('/api/receptor/upload' + q, { method: 'POST', body: fd })
+}
+
+// re-prepare an already-loaded receptor (waters/ions flags + removed components)
+export function reprepReceptor(receptorId, opts = {}) {
+  return call('/api/receptor/reprep', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      receptor_id: receptorId,
+      keep_waters: !!opts.keepWaters, keep_ions: !!opts.keepIons,
+      remove: opts.remove || [], ph: opts.ph ?? 7.4,
+    }),
+  })
 }
 
 export function minimize(payload) {

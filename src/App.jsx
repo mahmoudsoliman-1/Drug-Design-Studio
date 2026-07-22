@@ -62,6 +62,7 @@ const STEPS_SCREEN = [
 ]
 
 const INT_COLORS = { 'H-bond': '#2dd4bf', 'Hydrophobic': '#fbbf24', 'Salt bridge': '#a78bfa', 'π-stacking': '#f472b6' }
+const COMP_COLOR = { protein: '#2dd4bf', nucleic: '#a78bfa', ligand: '#f472b6', cofactor: '#fbbf24' }
 
 const DEFAULT_SMILES = 'CC(C)Cc1ccc(cc1)C(C)C(=O)Nc1ncccn1'
 
@@ -94,8 +95,8 @@ export default function App() {
   const [dockRes, setDockRes] = useState(null)
   const [screenRes, setScreenRes] = useState(null)
   const [cleared, setCleared] = useState(false)
-  const [ligRemoved, setLigRemoved] = useState(false) // hide co-crystal ligand from workspace (box stays put)
-  const [receptorSrc, setReceptorSrc] = useState(null) // {kind:'id',id} | {kind:'file',file} — for live re-prep on waters/ions toggle
+  const [removedComp, setRemovedComp] = useState([]) // structure-editor: removed component keys
+  const [receptorPh, setReceptorPh] = useState(7.4) // pH for receptor protonation (Open Babel)
   const [ligPreview, setLigPreview] = useState({ status: 'idle', data: null, msg: '' }) // live 2D+3D ligand preview
 
   // background jobs
@@ -196,52 +197,57 @@ export default function App() {
   async function loadReceptorById(pdbId) {
     setBusy('receptor'); setErrorMsg('')
     try {
-      const r = await api.fetchReceptor(pdbId, { keepWaters, keepIons })
+      const r = await api.fetchReceptor(pdbId, { keepWaters, keepIons, ph: receptorPh })
       setReceptor({ ...r, name: pdbId.toUpperCase() })
-      setReceptorSrc({ kind: 'id', id: pdbId })
       setBox({ center: { ...r.center }, size: { ...r.box } })
       if (r.native_ligand_smiles) { setLigandSmiles(r.native_ligand_smiles); setLigandFile(null) }
-      setCleared(false); setLigRemoved(false)
+      setCleared(false); setRemovedComp([])
     } catch (e) { setErrorMsg(engErr(e)) } finally { setBusy('') }
   }
   async function loadReceptorFile(file) {
     setBusy('receptor'); setErrorMsg('')
     try {
-      const r = await api.uploadReceptor(file, { keepWaters, keepIons })
+      const r = await api.uploadReceptor(file, { keepWaters, keepIons, ph: receptorPh })
       setReceptor({ ...r, name: file.name })
-      setReceptorSrc({ kind: 'file', file })
       setBox({ center: { ...r.center }, size: { ...r.box } })
       if (r.native_ligand_smiles) { setLigandSmiles(r.native_ligand_smiles); setLigandFile(null) }
-      setCleared(false); setLigRemoved(false)
+      setCleared(false); setRemovedComp([])
     } catch (e) { setErrorMsg(engErr(e)) } finally { setBusy('') }
   }
   function clearReceptor() {
     setReceptor(null); setBox(null); setDockRes(null); setScreenRes(null)
-    setHasResults(false); setCleared(true); setActive('receptor'); setErrorMsg(''); setLigRemoved(false)
-    setReceptorSrc(null)
+    setHasResults(false); setCleared(true); setActive('receptor'); setErrorMsg(''); setRemovedComp([])
   }
 
-  // re-prepare the already-loaded receptor with new waters/ions flags, keeping the current grid box
-  async function reprepareReceptor(kw, ki) {
-    if (!receptorSrc) return
+  // re-prepare the loaded receptor from its stored structure (waters/ions + removed
+  // components), keeping the same receptor_id and the current grid box
+  async function reprepareReceptor(kw, ki, remove, ph) {
+    if (!receptor?.receptor_id) return
     setBusy('receptor'); setErrorMsg('')
     try {
-      const r = receptorSrc.kind === 'id'
-        ? await api.fetchReceptor(receptorSrc.id, { keepWaters: kw, keepIons: ki })
-        : await api.uploadReceptor(receptorSrc.file, { keepWaters: kw, keepIons: ki })
-      setReceptor({ ...r, name: receptorSrc.kind === 'id' ? receptorSrc.id.toUpperCase() : receptorSrc.file.name })
-      setBox((prev) => prev || { center: { ...r.center }, size: { ...r.box } }) // preserve user's box
+      const r = await api.reprepReceptor(receptor.receptor_id, { keepWaters: kw, keepIons: ki, remove, ph })
+      setReceptor((prev) => ({ ...r, name: prev?.name }))
+      setBox((prev) => prev || { center: { ...r.center }, size: { ...r.box } })
     } catch (e) { setErrorMsg(engErr(e)) } finally { setBusy('') }
   }
   function toggleKeepWaters() {
     const next = !keepWaters
     setKeepWaters(next)
-    if (receptorSrc) reprepareReceptor(next, keepIons)
+    if (receptor) reprepareReceptor(next, keepIons, removedComp, receptorPh)
   }
   function toggleKeepIons() {
     const next = !keepIons
     setKeepIons(next)
-    if (receptorSrc) reprepareReceptor(keepWaters, next)
+    if (receptor) reprepareReceptor(keepWaters, next, removedComp, receptorPh)
+  }
+  function toggleComponent(key) {
+    const next = removedComp.includes(key) ? removedComp.filter((k) => k !== key) : [...removedComp, key]
+    setRemovedComp(next)
+    reprepareReceptor(keepWaters, keepIons, next, receptorPh)
+  }
+  function commitReceptorPh(v) {
+    setReceptorPh(v)
+    if (receptor) reprepareReceptor(keepWaters, keepIons, removedComp, v)
   }
 
   async function runDocking() {
@@ -338,8 +344,7 @@ export default function App() {
                       return (
                         <MoleculeViewer style={viewStyle} showLigand={ligStep ? true : showLigand} spin={spin}
                           showInteractions={ligStep ? false : showInter}
-                          pdb={ligStep ? ligPreview.data.ligand_pdb
-                            : (receptor ? (ligRemoved ? stripLigand(receptor.display_pdb, receptor.ligand_resn) : receptor.display_pdb) : null)}
+                          pdb={ligStep ? ligPreview.data.ligand_pdb : (receptor?.display_pdb || null)}
                           empty={ligStep ? false : !receptor} ligResn={ligStep ? 'LIG' : (receptor?.ligand_resn || 'MK1')}
                           box={box} showBox={!ligStep && active === 'site'} />
                       )
@@ -365,7 +370,8 @@ export default function App() {
                     protonate={protonate} setProtonate={setProtonate}
                     keepWaters={keepWaters} onToggleWaters={toggleKeepWaters}
                     keepIons={keepIons} onToggleIons={toggleKeepIons}
-                    ligRemoved={ligRemoved} onToggleLig={() => setLigRemoved((v) => !v)}
+                    removedComp={removedComp} onToggleComponent={toggleComponent}
+                    receptorPh={receptorPh} onChangePh={setReceptorPh} onCommitPh={commitReceptorPh}
                     onFetchReceptor={loadReceptorById} onUploadReceptor={loadReceptorFile}
                     onClearReceptor={clearReceptor} />
                 )}
@@ -426,15 +432,6 @@ function JobsPanel({ jobs, activeJobId, onClose, onOpen, onDelete }) {
 function engErr(e) {
   const m = String(e?.message || e)
   return m === 'ENGINE_OFFLINE' ? 'Cannot reach the DDS engine. Is it running on port 8765?' : m
-}
-
-// remove the co-crystal ligand's atom records from a PDB (grid box is stored
-// separately, so its centre stays put even after the ligand is removed)
-function stripLigand(pdb, resn) {
-  if (!pdb || !resn) return pdb
-  return pdb.split('\n')
-    .filter((l) => !((l.startsWith('HETATM') || l.startsWith('ATOM')) && l.slice(17, 20).trim() === resn))
-    .join('\n')
 }
 
 function parseSmilesLibrary(text) {
@@ -692,7 +689,8 @@ function DockingOverlay({ label = 'Running AutoDock Vina' }) {
 function StepPanel({ active, steps, exhaustiveness, setExhaustiveness, scoring, setScoring, onRun, running, isScreen,
   engine, busy, receptor, box, setBox, ligandSmiles, setLigandSmiles, ligandFile, setLigandFile, onClearLigand, ligPreview,
   protonate, setProtonate, keepWaters, onToggleWaters, keepIons, onToggleIons,
-  ligRemoved, onToggleLig, onFetchReceptor, onUploadReceptor, onClearReceptor }) {
+  removedComp, onToggleComponent, receptorPh, onChangePh, onCommitPh,
+  onFetchReceptor, onUploadReceptor, onClearReceptor }) {
   const meta = (steps || STEPS_SINGLE).find((s) => s.id === active) || STEPS_SINGLE[0]
   const [pdbId, setPdbId] = useState('1HSG')
   const fileRef = useState(null)[0]
@@ -729,6 +727,15 @@ function StepPanel({ active, steps, exhaustiveness, setExhaustiveness, scoring, 
             <Check label="Retain waters" checked={keepWaters} onClick={onToggleWaters} />
             <Check label="Retain ions" checked={keepIons} onClick={onToggleIons} />
           </div>
+          <div className="flex items-center gap-2.5 px-1">
+            <span className="w-24 shrink-0 text-[11px] text-slate-400">Protonation pH</span>
+            <input type="range" min="4" max="9" step="0.5" value={receptorPh}
+              onChange={(e) => onChangePh(+e.target.value)}
+              onMouseUp={(e) => onCommitPh(+e.target.value)}
+              onKeyUp={(e) => onCommitPh(+e.target.value)}
+              className="flex-1 accent-accent" />
+            <span className="w-9 text-right font-mono text-[11px] text-accent">{Number(receptorPh).toFixed(1)}</span>
+          </div>
           {receptor ? (
             <div className="rounded-lg bg-emerald-500/10 p-3 text-[11px] ring-1 ring-emerald-500/30">
               <div className="flex items-center gap-1.5">
@@ -742,19 +749,25 @@ function StepPanel({ active, steps, exhaustiveness, setExhaustiveness, scoring, 
                 {receptor.n_atoms} atoms · {receptor.n_residues} residues{receptor.detected_ligands?.length ? ` · site from ${receptor.detected_ligands[0]}` : ''}
                 {receptor.kept_waters ? ` · +${receptor.n_waters} waters` : ''}{receptor.kept_ions ? ` · +${receptor.n_ions} ions` : ''}
               </div>
-              {receptor.ligand_resn && (
-                <div className="mt-2 flex items-center gap-1.5 border-t border-emerald-500/20 pt-2">
-                  <FlaskIcon className="h-3 w-3 text-fuchsia-400" />
-                  <span className="text-slate-300">Co-crystal ligand <span className="font-mono text-fuchsia-300">{receptor.ligand_resn}</span></span>
-                  <button onClick={onToggleLig}
-                    className={`ml-auto flex items-center gap-1 rounded-md px-2 py-1 text-[10px] font-medium ${ligRemoved ? 'bg-ink-700 text-slate-200 hover:bg-ink-600' : 'bg-red-500/15 text-red-300 hover:bg-red-500/25'}`}>
-                    {ligRemoved ? 'Restore' : <><TrashIcon className="h-3 w-3" /> Remove</>}
-                  </button>
-                </div>
-              )}
-              {receptor.ligand_resn && (
-                <div className="mt-1.5 text-[10px] leading-relaxed text-slate-500">
-                  {ligRemoved ? 'Ligand hidden — grid box stays centred on its original position.' : 'Grid box is centred here; removing the ligand keeps the box in place.'}
+              {receptor.components?.length > 0 && (
+                <div className="mt-2 border-t border-emerald-500/20 pt-2">
+                  <div className="mb-1.5 text-[10px] font-semibold uppercase tracking-wide text-slate-400">Structure · delete parts as needed</div>
+                  <div className="space-y-1">
+                    {receptor.components.map((c) => (
+                      <div key={c.key} className="flex items-center gap-2">
+                        <span className="h-2 w-2 shrink-0 rounded-full" style={{ background: COMP_COLOR[c.kind] || '#64748b' }} />
+                        <span className={`text-[11px] ${c.removed ? 'text-slate-500 line-through' : 'text-slate-200'}`}>{c.label}</span>
+                        <span className="truncate text-[10px] text-slate-500">{c.detail}</span>
+                        <button onClick={() => onToggleComponent(c.key)} title={c.removed ? 'Restore' : 'Delete from structure'}
+                          className={`ml-auto flex shrink-0 items-center gap-1 rounded-md px-2 py-0.5 text-[10px] font-medium ${c.removed ? 'bg-ink-700 text-slate-200 hover:bg-ink-600' : 'bg-red-500/15 text-red-300 hover:bg-red-500/25'}`}>
+                          {c.removed ? 'Restore' : <><TrashIcon className="h-3 w-3" /> Remove</>}
+                        </button>
+                      </div>
+                    ))}
+                  </div>
+                  <div className="mt-1.5 text-[10px] leading-relaxed text-slate-500">
+                    Deletions rebuild the docking structure. The grid box stays put; the Ligand menu is independent.
+                  </div>
                 </div>
               )}
             </div>
@@ -1217,12 +1230,10 @@ function Modal({ children, onClose }) {
 /* ------------------------------------------------------------------ */
 /*  Cite DDS                                                          */
 /* ------------------------------------------------------------------ */
-const CITATION = 'Mahmoud E. Soliman, Drug Design Studio (DDS): a robust, cross-platform graphical interface for molecular docking, virtual screening and protein–ligand interaction analysis, Journal of Computational Chemistry, 2026 (under review).'
+const CITATION = 'Mahmoud E. Soliman, Drug Design Studio (DDS): an all-in-one graphical platform for molecular docking, virtual screening and protein-ligand interaction analysis under review'
 const CITATION_BIBTEX = `@article{soliman2026dds,
   author  = {Soliman, Mahmoud E.},
-  title   = {Drug Design Studio (DDS): A Robust, Cross-Platform Graphical Interface for Molecular Docking, Virtual Screening and Protein--Ligand Interaction Analysis},
-  journal = {Journal of Computational Chemistry},
-  year    = {2026},
+  title   = {Drug Design Studio (DDS): An All-in-One Graphical Platform for Molecular Docking, Virtual Screening and Protein-Ligand Interaction Analysis},
   note    = {Under review}
 }`
 

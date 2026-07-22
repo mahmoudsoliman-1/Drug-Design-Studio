@@ -42,6 +42,15 @@ class FetchReq(BaseModel):
     pdb_id: str
     keep_waters: bool = False
     keep_ions: bool = False
+    ph: float = 7.4
+
+
+class RepRepReq(BaseModel):
+    receptor_id: str
+    keep_waters: bool = False
+    keep_ions: bool = False
+    remove: List[str] = []
+    ph: float = 7.4
 
 
 class DockReq(BaseModel):
@@ -267,6 +276,7 @@ def _run_dock(jid):
                 "num_modes": req.get("num_modes", 9),
                 "center": req.get("center"), "size": req.get("size"),
                 "protonate": req.get("protonate", True), "ph": req.get("ph", 7.4),
+                "receptor_ph": rec.get("ph", 7.4),
             },
         }
         job["status"] = "done"
@@ -325,6 +335,7 @@ def _run_screen(jid):
                 "num_modes": 5,
                 "center": req.get("center"), "size": req.get("size"),
                 "protonate": True, "ph": 7.4, "n_ligands": len(ligs),
+                "receptor_ph": rec.get("ph", 7.4),
             },
         }
         job["status"] = "done"
@@ -335,12 +346,14 @@ def _run_screen(jid):
 
 
 # --------------------------- receptor helpers ---------------------------
-def _store_receptor(pdb_text, keep_waters=False, keep_ions=False):
-    rid = uuid.uuid4().hex[:12]
+def _store_receptor(pdb_text, keep_waters=False, keep_ions=False, remove=None, rid=None, ph=7.4):
     rec_pdbqt, protein_pdb, display_pdb, ligand_pdb, meta = prep.prepare_receptor(
-        pdb_text, keep_waters=keep_waters, keep_ions=keep_ions)
+        pdb_text, ph=ph, keep_waters=keep_waters, keep_ions=keep_ions, remove=remove)
+    rid = rid or uuid.uuid4().hex[:12]
     RECEPTORS[rid] = {"pdbqt": rec_pdbqt, "protein_pdb": protein_pdb,
-                      "ligand_pdb": ligand_pdb, "meta": meta}
+                      "ligand_pdb": ligand_pdb, "meta": meta, "pdb_text": pdb_text,
+                      "keep_waters": keep_waters, "keep_ions": keep_ions,
+                      "remove": list(remove or []), "ph": ph}
     return {"receptor_id": rid, "display_pdb": display_pdb, **meta}
 
 
@@ -375,18 +388,32 @@ def receptor_fetch(req: FetchReq):
     except Exception as e:
         raise HTTPException(502, "could not fetch %s: %s" % (pid, e))
     try:
-        return _store_receptor(pdb_text, req.keep_waters, req.keep_ions)
+        return _store_receptor(pdb_text, req.keep_waters, req.keep_ions, ph=req.ph)
     except Exception as e:
         raise HTTPException(400, "receptor preparation failed: %s" % e)
 
 
 @app.post("/api/receptor/upload")
-async def receptor_upload(file: UploadFile = File(...), keep_waters: bool = False, keep_ions: bool = False):
+async def receptor_upload(file: UploadFile = File(...), keep_waters: bool = False, keep_ions: bool = False, ph: float = 7.4):
     pdb_text = (await file.read()).decode(errors="ignore")
     try:
-        return _store_receptor(pdb_text, keep_waters, keep_ions)
+        return _store_receptor(pdb_text, keep_waters, keep_ions, ph=ph)
     except Exception as e:
         raise HTTPException(400, "receptor preparation failed: %s" % e)
+
+
+@app.post("/api/receptor/reprep")
+def receptor_reprep(req: RepRepReq):
+    """Re-prepare an already-loaded receptor with new waters/ions flags and/or a
+    new set of removed components — reuses the stored structure and the same id."""
+    rec = RECEPTORS.get(req.receptor_id)
+    if not rec or not rec.get("pdb_text"):
+        raise HTTPException(404, "receptor not available — re-load it")
+    try:
+        return _store_receptor(rec["pdb_text"], req.keep_waters, req.keep_ions,
+                               req.remove, rid=req.receptor_id, ph=req.ph)
+    except Exception as e:
+        raise HTTPException(400, "re-preparation failed: %s" % e)
 
 
 @app.post("/api/ligand/preview")

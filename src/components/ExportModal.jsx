@@ -548,7 +548,7 @@ function methodsHTML(meta) {
   const screening = meta.mode === 'screen'
 
   const R = [
-    'Soliman ME. Drug Design Studio (DDS): a robust, cross-platform graphical interface for molecular docking, virtual screening and protein&ndash;ligand interaction analysis. <i>J Comput Chem.</i> 2026 (under review).',
+    'Mahmoud E. Soliman, Drug Design Studio (DDS): an all-in-one graphical platform for molecular docking, virtual screening and protein-ligand interaction analysis under review',
     'Berman HM, Westbrook J, Feng Z, <i>et al.</i> The Protein Data Bank. <i>Nucleic Acids Res.</i> 2000;28:235&ndash;242.',
     "O'Boyle NM, Banck M, James CA, <i>et al.</i> Open Babel: An open chemical toolbox. <i>J Cheminform.</i> 2011;3:33.",
     'Gasteiger J, Marsili M. Iterative partial equalization of orbital electronegativity &mdash; a rapid access to atomic charges. <i>Tetrahedron.</i> 1980;36:3219&ndash;3228.',
@@ -561,7 +561,7 @@ function methodsHTML(meta) {
   const para = (body) => `<p style="font-size:12px;line-height:1.75;color:#334155;margin:8px 0">${body}</p>`
 
   const intro = para(
-    `Drug Design Studio (DDS)<sup>1</sup> was used as the graphical interface for system preparation, docking, and analysis of the ${screening ? 'virtual-screening' : 'molecular-docking'} calculations. The three-dimensional structure of <b>${meta.target}</b>${meta.pdb ? ` (Protein Data Bank<sup>2</sup> entry <code>${meta.pdb}</code>)` : ''} was used as the receptor. Crystallographic waters and heteroatoms were removed (unless explicitly retained), polar hydrogen atoms were added, and Gasteiger&ndash;Marsili partial atomic charges<sup>4</sup> were assigned using Open Babel<sup>3</sup>. The prepared receptor was converted to the AutoDock PDBQT format and treated as rigid throughout docking.`)
+    `Drug Design Studio (DDS)<sup>1</sup> was used as the graphical interface for system preparation, docking, and analysis of the ${screening ? 'virtual-screening' : 'molecular-docking'} calculations. The three-dimensional structure of <b>${meta.target}</b>${meta.pdb ? ` (Protein Data Bank<sup>2</sup> entry <code>${meta.pdb}</code>)` : ''} was used as the receptor. Crystallographic waters and heteroatoms were removed (unless explicitly retained); the user may additionally delete individual chains, cofactors, or nucleic-acid fragments prior to preparation. Hydrogen atoms were then added and the protonation states of titratable residues were assigned for a pH of ${p.receptor_ph ?? 7.4} using the Open Babel<sup>3</sup> pK<sub>a</sub> model, and Gasteiger&ndash;Marsili partial atomic charges<sup>4</sup> were assigned. The prepared receptor was converted to the AutoDock PDBQT format and treated as rigid throughout docking.`)
 
   const ligand = para(
     `Ligands were processed with RDKit and ${protonated}. A three-dimensional conformer was generated with the ETKDG distance-geometry algorithm and energy-minimised with the Merck Molecular Force Field (MMFF94)<sup>5</sup>. Rotatable bonds and Gasteiger&ndash;Marsili charges<sup>4</sup> were assigned, and the ligand was converted to PDBQT format.`)

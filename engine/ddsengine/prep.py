@@ -10,6 +10,11 @@ _IONS = {"NA", "CL", "K", "MG", "CA", "ZN", "MN", "FE", "CU", "CO", "NI",
          "CD", "BR", "IOD", "SO4", "PO4"}
 # heteroatoms never treated as the bound ligand (waters, ions, buffers, cryo-agents)
 _SKIP_HET = _WATER | _IONS | {"GOL", "EDO", "ACT", "DMS", "PEG", "MPD", "FMT", "TRS"}
+# standard polymer residues, for classifying chains as protein vs nucleic acid
+_AA = {"ALA", "ARG", "ASN", "ASP", "CYS", "GLN", "GLU", "GLY", "HIS", "ILE",
+       "LEU", "LYS", "MET", "PHE", "PRO", "SER", "THR", "TRP", "TYR", "VAL",
+       "MSE", "SEC", "PYL", "HID", "HIE", "HIP", "CYX", "ASH", "GLH", "LYN"}
+_NUC = {"DA", "DC", "DG", "DT", "DU", "DI", "A", "C", "G", "U", "I"}
 
 
 def ligand_props(mol):
@@ -131,76 +136,123 @@ def _het_to_smiles(het_lines):
         return None
 
 
-def prepare_receptor(pdb_text, ph=7.4, keep_waters=False, keep_ions=False):
-    """Prepare a rigid receptor PDBQT, and also extract the co-crystallised
-    ligand (kept for display + auto-recognised as a ligand). Crystallographic
-    waters and/or ions may optionally be retained in the receptor.
-    Returns (receptor_pdbqt, protein_pdb, display_pdb, ligand_pdb, meta)."""
-    prot_lines = [l for l in pdb_text.splitlines() if l.startswith("ATOM") or l.startswith("TER")]
-    if not prot_lines:
-        raise ValueError("no protein ATOM records found")
+def _het_key(k):
+    return "het:%s:%s:%s" % k  # (resn, chain, resi)
 
-    # group heteroatoms (candidate ligands) by residue, and collect waters/ions
-    het = {}
-    kept_het = []
-    n_waters = n_ions = 0
-    for l in pdb_text.splitlines():
-        if l.startswith("HETATM"):
+
+def prepare_receptor(pdb_text, ph=7.4, keep_waters=False, keep_ions=False, remove=None):
+    """Prepare a rigid receptor PDBQT from the loaded structure, honouring a set
+    of removed components (protein/nucleic chains, cofactors, the co-crystal
+    ligand). Also extracts the bound ligand (for the box + auto-SMILES). Returns
+    (receptor_pdbqt, protein_pdb, display_pdb, ligand_pdb, meta); meta carries a
+    'components' inventory for the structure editor."""
+    remove = set(remove or [])
+    lines = pdb_text.splitlines()
+
+    # ---- parse into chains (ATOM) and heteroatom groups (HETATM) ----
+    chain_lines, chain_res = {}, {}          # chain -> [lines] ; chain -> {resi: resn}
+    het_groups = {}                          # (resn,chain,resi) -> [lines]
+    water_lines, ion_lines = [], []
+    for l in lines:
+        if l.startswith("ATOM") or l.startswith("TER"):
+            ch = l[21] if len(l) > 21 else " "
+            chain_lines.setdefault(ch, []).append(l)
+            if l.startswith("ATOM"):
+                chain_res.setdefault(ch, {})[l[22:26].strip()] = l[17:20].strip()
+        elif l.startswith("HETATM"):
             resn = l[17:20].strip()
             if resn in _WATER:
-                n_waters += 1
-                if keep_waters:
-                    kept_het.append(l)
-                continue
-            if resn in _IONS:
-                n_ions += 1
-                if keep_ions:
-                    kept_het.append(l)
-                continue
-            if resn in _SKIP_HET:
-                continue
-            key = (resn, l[21], l[22:26].strip())
-            het.setdefault(key, []).append(l)
+                water_lines.append(l)
+            elif resn in _IONS:
+                ion_lines.append(l)
+            elif resn not in _SKIP_HET:
+                het_groups.setdefault((resn, l[21], l[22:26].strip()), []).append(l)
+    if not chain_lines and not het_groups:
+        raise ValueError("no ATOM/HETATM records found")
 
-    protein_pdb = "\n".join(prot_lines) + "\nEND\n"
-    receptor_src = prot_lines + kept_het   # protein (+ optional waters/ions) for docking
+    # largest heteroatom group = bound ligand; the rest are cofactors
+    ligand_key = None
+    if het_groups:
+        (lresn, lchain, lresi), _ = max(het_groups.items(), key=lambda kv: len(kv[1]))
+        ligand_key = _het_key((lresn, lchain, lresi))
+
+    # ---- assemble kept lines ----
+    kept_chain = [l for ch, lns in chain_lines.items()
+                  if ("chain:" + ch) not in remove for l in lns]
+    kept_cofactor, lig_lines = [], []
+    for k, lns in het_groups.items():
+        key = _het_key(k)
+        if key == ligand_key:
+            lig_lines = lns
+        elif key not in remove:
+            kept_cofactor += lns
+    keep_lig = ligand_key is not None and ligand_key not in remove
+    kept_wat = water_lines if (keep_waters and "waters" not in remove) else []
+    kept_ion = ion_lines if (keep_ions and "ions" not in remove) else []
+
+    # receptor for docking = kept polymer + cofactors + optional waters/ions (never the ligand)
+    receptor_src = kept_chain + kept_cofactor + kept_wat + kept_ion
+    if not any(l.startswith("ATOM") or l.startswith("HETATM") for l in receptor_src):
+        raise ValueError("nothing left in the receptor — undo a deletion")
+    protein_pdb = "\n".join(receptor_src) + "\nEND\n"
     mol = pybel.readstring("pdb", "\n".join(receptor_src))
     mol.OBMol.AddHydrogens(False, True, ph)  # polar-aware, correct for pH
     receptor_pdbqt = mol.write("pdbqt", opt={"r": True})  # -xr rigid receptor
 
-    resset, coords = set(), []
-    for l in prot_lines:
-        if l.startswith("ATOM"):
-            resset.add((l[21], l[22:26].strip()))
-            coords.append((float(l[30:38]), float(l[38:46]), float(l[46:54])))
+    coords = [(float(l[30:38]), float(l[38:46]), float(l[46:54]))
+              for l in kept_chain if l.startswith("ATOM")]
+    resset = {(l[21], l[22:26].strip()) for l in kept_chain if l.startswith("ATOM")}
 
-    # pick the largest non-water heteroatom group as the bound ligand
+    # box centres on the bound ligand if present, else the receptor centroid
     ligand_resn = native_smiles = ligand_pdb = None
-    lig_lines = []
-    if het:
-        (resn, chain, resi), lig_lines = max(het.items(), key=lambda kv: len(kv[1]))
-        ligand_resn = resn
+    if lig_lines:
+        ligand_resn = lresn
         ligand_pdb = "\n".join(lig_lines) + "\nEND\n"
         native_smiles = _het_to_smiles(lig_lines)
-        lig_coords = [(float(l[30:38]), float(l[38:46]), float(l[46:54])) for l in lig_lines]
-        center, box = _centroid(lig_coords), {"x": 22.0, "y": 22.0, "z": 22.0}
-    else:
+        lc = [(float(l[30:38]), float(l[38:46]), float(l[46:54])) for l in lig_lines]
+        center, box = _centroid(lc), {"x": 22.0, "y": 22.0, "z": 22.0}
+    elif coords:
         center, box = _centroid(coords), {"x": 26.0, "y": 26.0, "z": 26.0}
+    else:
+        center, box = {"x": 0.0, "y": 0.0, "z": 0.0}, {"x": 26.0, "y": 26.0, "z": 26.0}
 
-    # display structure keeps the native ligand (+ retained waters/ions) for the viewer
-    display_pdb = "\n".join(prot_lines + lig_lines + kept_het) + "\nEND\n"
+    display_pdb = "\n".join(kept_chain + kept_cofactor + kept_wat + kept_ion +
+                            (lig_lines if keep_lig else [])) + "\nEND\n"
+
+    # ---- component inventory for the structure editor ----
+    components = []
+    for ch, lns in chain_lines.items():
+        names = list(chain_res.get(ch, {}).values())
+        kind = "nucleic" if names and sum(n in _NUC for n in names) > len(names) / 2 else "protein"
+        components.append({
+            "key": "chain:" + ch, "kind": kind,
+            "label": ("Chain %s" % ch) if ch.strip() else "Chain",
+            "detail": "%d residues" % len(chain_res.get(ch, {})),
+            "removed": ("chain:" + ch) in remove,
+        })
+    for k, lns in het_groups.items():
+        key = _het_key(k)
+        is_lig = key == ligand_key
+        components.append({
+            "key": key, "kind": "ligand" if is_lig else "cofactor",
+            "label": ("%s · %s" % (k[0], k[1])) if k[1].strip() else k[0],
+            "detail": "bound ligand" if is_lig else "cofactor / heteroatom",
+            "removed": key in remove,
+        })
 
     meta = {
         "n_atoms": len(coords),
         "n_residues": len(resset),
         "center": center,
         "box": box,
-        "detected_ligands": [k[0] for k in het.keys()],
+        "detected_ligands": [k[0] for k in het_groups.keys()],
         "ligand_resn": ligand_resn,
         "native_ligand_smiles": native_smiles,
-        "n_waters": n_waters,
-        "n_ions": n_ions,
-        "kept_waters": bool(keep_waters and n_waters),
-        "kept_ions": bool(keep_ions and n_ions),
+        "n_waters": len(water_lines),
+        "n_ions": len(ion_lines),
+        "kept_waters": bool(keep_waters and water_lines and "waters" not in remove),
+        "kept_ions": bool(keep_ions and ion_lines and "ions" not in remove),
+        "ph": ph,
+        "components": components,
     }
     return receptor_pdbqt, protein_pdb, display_pdb, ligand_pdb, meta
