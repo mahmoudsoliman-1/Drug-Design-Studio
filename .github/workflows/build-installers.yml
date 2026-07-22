@@ -39,6 +39,9 @@ jobs:
             https://github.com/ccsb-scripps/AutoDock-Vina/releases/download/v1.2.5/vina_1.2.5_mac_x86_64
           chmod +x engine/bin/vina
 
+      - name: Bundle AI key
+        run: echo "GROQ_API_KEY=${{ secrets.GROQ_API_KEY }}" > engine/.env
+
       - name: PyInstaller + fixup + dmg
         working-directory: engine
         run: |
@@ -82,6 +85,9 @@ jobs:
           New-Item -ItemType Directory -Force engine/bin | Out-Null
           curl.exe -L -o engine/bin/vina.exe `
             https://github.com/ccsb-scripps/AutoDock-Vina/releases/download/v1.2.5/vina_1.2.5_win.exe
+
+      - name: Bundle AI key
+        run: '"GROQ_API_KEY=${{ secrets.GROQ_API_KEY }}" | Out-File -Encoding ascii engine/.env'
 
       - name: PyInstaller
         working-directory: engine
