@@ -7,6 +7,11 @@ from .paths import vina_path
 
 VINA = vina_path()
 
+# On Windows, a GUI (windowed) app spawns a visible console window for each child
+# console process (vina.exe); CREATE_NO_WINDOW hides it so the docking runs silently
+# and can't be killed by the user closing that console.
+_SUBPROCESS_KW = {"creationflags": subprocess.CREATE_NO_WINDOW} if os.name == "nt" else {}
+
 
 def run_vina(receptor_pdbqt, ligand_pdbqt, center, size,
              scoring="vina", exhaustiveness=16, num_modes=9, workdir=None):
@@ -29,7 +34,7 @@ def run_vina(receptor_pdbqt, ligand_pdbqt, center, size,
     if scoring in ("vina", "vinardo"):
         cmd += ["--scoring", scoring]
 
-    res = subprocess.run(cmd, capture_output=True, text=True, timeout=1800)
+    res = subprocess.run(cmd, capture_output=True, text=True, timeout=1800, **_SUBPROCESS_KW)
     if not os.path.exists(opath):
         raise RuntimeError("vina failed: %s" % ((res.stderr or res.stdout)[-600:]))
 
