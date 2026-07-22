@@ -68,7 +68,7 @@ export default function ExportModal({ onClose, payload }) {
     try {
       if (kind === 'report') {
         const html = buildReportHTML(meta, sections)
-        if (reportFmt === 'print') openPrint(html)
+        if (reportFmt === 'print') await openPrint(html)
         else await downloadText(`${meta.target.replace(/\s+/g, '_')}_DDS_report.html`, html, 'text/html')
       } else if (kind === 'structures') {
         await exportStructures(meta, struct)
@@ -298,7 +298,10 @@ function downloadText(filename, text, mime) {
 
 function openPrint(html) {
   const w = window.open('', '_blank')
-  if (!w) { alert('Please allow pop-ups to use Print / PDF.'); return }
+  if (!w) {
+    // native app (WKWebView) blocks pop-ups — save the HTML report to open & print in a browser
+    return saveFile('DDS_report.html', html, 'text/html;charset=utf-8')
+  }
   w.document.write(html)
   w.document.close()
   w.focus()
