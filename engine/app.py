@@ -111,19 +111,25 @@ GROQ_MODEL = os.environ.get("DDS_AI_MODEL", "llama-3.3-70b-versatile")
 def _load_bundled_key():
     """Load the Groq key bundled with the app (or engine/.env in dev) into the
     environment, unless one is already set. The .env is gitignored — the key is
-    inside the built app but never in the public source."""
+    inside the built app but never in the public source. Robust to a UTF-8 BOM,
+    an empty value, and different bundle layouts (mac Frameworks vs win _internal)."""
     if os.environ.get("GROQ_API_KEY"):
         return
     from ddsengine.paths import resource_dir
-    try:
-        with open(os.path.join(resource_dir(), ".env")) as f:
-            for line in f:
-                s = line.strip()
-                if s.startswith("GROQ_API_KEY="):
-                    os.environ["GROQ_API_KEY"] = s.split("=", 1)[1].strip().strip('"').strip("'")
-                    return
-    except Exception:
-        pass
+    rd = resource_dir()
+    candidates = [os.path.join(rd, ".env"), os.path.join(os.path.dirname(rd), ".env")]
+    for path in candidates:
+        try:
+            with open(path, encoding="utf-8-sig") as f:  # utf-8-sig strips a BOM if present
+                for line in f:
+                    s = line.strip().lstrip("﻿")
+                    if s.startswith("GROQ_API_KEY="):
+                        val = s.split("=", 1)[1].strip().strip('"').strip("'")
+                        if val:  # ignore an empty key (e.g. secret not set in CI)
+                            os.environ["GROQ_API_KEY"] = val
+                            return
+        except Exception:
+            pass
 
 _AI_ASKS = {
     "pocket": "Assess this receptor and its likely binding pocket for docking readiness.",
