@@ -14,7 +14,7 @@ import urllib.request
 def _run_engine(port):
     import uvicorn
     from app import app
-    config = uvicorn.Config(app, host="127.0.0.1", port=port, log_level="warning")
+    config = uvicorn.Config(app, host="127.0.0.1", port=port, log_level="info", access_log=True)
     server = uvicorn.Server(config)
     server.install_signal_handlers = lambda: None  # not running in the main thread
     server.run()

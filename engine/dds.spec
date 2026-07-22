@@ -82,5 +82,13 @@ if sys.platform == "darwin":
         coll, name="Drug Design Studio.app",
         icon=_icns,
         bundle_identifier="za.ac.ukzn.drugdesignstudio",
-        info_plist={"NSHighResolutionCapable": True, "CFBundleShortVersionString": "1.1.0"},
+        info_plist={
+            "NSHighResolutionCapable": True,
+            "CFBundleShortVersionString": "1.1.1",
+            # WKWebView blocks the local http://127.0.0.1 UI without this → blank white window
+            "NSAppTransportSecurity": {
+                "NSAllowsArbitraryLoads": True,
+                "NSAllowsLocalNetworking": True,
+            },
+        },
     )
