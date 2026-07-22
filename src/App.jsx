@@ -171,6 +171,9 @@ export default function App() {
   }, [ligandSmiles, ligandFile])
 
   const activeJob = jobs.find((j) => j.job_id === activeJobId) || null
+  // true whenever the awaited job is still running on the server — survives tab/mode
+  // navigation (unlike the transient local `running` flag), so the indicators persist
+  const isRunning = running || (activeJob != null && activeJob.status === 'running')
 
   async function openJob(summary) {
     if (summary.status !== 'done') return
@@ -297,7 +300,7 @@ export default function App() {
         steps={steps} mode={mode} switchMode={switchMode} />
 
       <div className="flex min-w-0 flex-1 flex-col">
-        <TopBar onRun={runDocking} running={running} isScreen={isScreen}
+        <TopBar onRun={runDocking} running={isRunning} isScreen={isScreen}
           bestAffinity={hasResults ? bestAffinity : null} receptorName={receptor?.name}
           ligandCount={isScreen ? parseSmilesLibrary(screenSmiles).length : 1} scoring={scoring}
           activeJob={activeJob} runningCount={jobs.filter((j) => j.status === 'running').length}
@@ -357,13 +360,13 @@ export default function App() {
               {/* Inspector */}
               <aside className="flex w-[340px] shrink-0 flex-col gap-4">
                 {isScreen && active === 'ligands' ? (
-                  <ScreeningLibraryPanel onRun={runDocking} running={running}
+                  <ScreeningLibraryPanel onRun={runDocking} running={isRunning}
                     smiles={screenSmiles} setSmiles={setScreenSmiles}
                     count={parseSmilesLibrary(screenSmiles).length} />
                 ) : (
                   <StepPanel active={active} steps={steps} exhaustiveness={exhaustiveness}
                     setExhaustiveness={setExhaustiveness} scoring={scoring} setScoring={setScoring}
-                    onRun={runDocking} running={running} isScreen={isScreen}
+                    onRun={runDocking} running={isRunning} isScreen={isScreen}
                     engine={engine} busy={busy} receptor={receptor} box={box} setBox={setBox}
                     ligandSmiles={ligandSmiles} setLigandSmiles={setLigandSmiles}
                     ligandFile={ligandFile} setLigandFile={setLigandFile} onClearLigand={clearLigand} ligPreview={ligPreview}
