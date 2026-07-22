@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
+import { saveFile } from '../download.js'
 
 // Renders a protein (or docked complex) with 3Dmol.js. If `pdb` (raw PDB text)
 // is supplied it is rendered directly; otherwise the demo 1HSG complex is fetched.
@@ -49,12 +50,7 @@ export default function MoleculeViewer({
     viewer.setBackgroundColor(0x070b14, 1)
     viewer.render()
     if (!uri) return
-    const a = document.createElement('a')
-    a.href = uri
-    a.download = `DDS_complex_${bg}.png`
-    document.body.appendChild(a)
-    a.click()
-    a.remove()
+    saveFile(`DDS_complex_${bg}.png`, uri, 'image/png')
   }
 
   // create the viewer once

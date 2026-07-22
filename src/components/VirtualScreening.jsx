@@ -7,6 +7,7 @@ import ExportModal from './ExportModal.jsx'
 import Ligand2D from './Ligand2D.jsx'
 import MoleculeViewer from './MoleculeViewer.jsx'
 import * as api from '../api.js'
+import { saveFile } from '../download.js'
 
 /* ------------------------------------------------------------------ */
 /*  Virtual Screening — dock a library of ligands vs one target,      */
@@ -102,15 +103,7 @@ function exportRankedCsv(rows, target) {
   rows.forEach((r, i) => {
     lines.push([i + 1, r.id, r.smiles, r.affinity, r.mw, r.logp, r.hbd, r.hba, r.qed, r.lipinski_pass ? 'pass' : 'flag'].map(esc).join(','))
   })
-  const blob = new Blob([lines.join('\n')], { type: 'text/csv;charset=utf-8' })
-  const url = URL.createObjectURL(blob)
-  const a = document.createElement('a')
-  a.href = url
-  a.download = `${(target || 'screening').replace(/\s+/g, '_')}_screening.csv`
-  document.body.appendChild(a)
-  a.click()
-  a.remove()
-  setTimeout(() => URL.revokeObjectURL(url), 1000)
+  saveFile(`${(target || 'screening').replace(/\s+/g, '_')}_screening.csv`, lines.join('\n'), 'text/csv;charset=utf-8')
 }
 
 function parseLib(text) {

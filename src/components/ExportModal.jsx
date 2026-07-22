@@ -1,6 +1,7 @@
 import { useState } from 'react'
 import JSZip from 'jszip'
 import * as api from '../api.js'
+import { saveFile } from '../download.js'
 
 /* ------------------------------------------------------------------ */
 /*  Export & Prepare dialog                                            */
@@ -68,7 +69,7 @@ export default function ExportModal({ onClose, payload }) {
       if (kind === 'report') {
         const html = buildReportHTML(meta, sections)
         if (reportFmt === 'print') openPrint(html)
-        else downloadText(`${meta.target.replace(/\s+/g, '_')}_DDS_report.html`, html, 'text/html')
+        else await downloadText(`${meta.target.replace(/\s+/g, '_')}_DDS_report.html`, html, 'text/html')
       } else if (kind === 'structures') {
         await exportStructures(meta, struct)
       } else if (kind === 'md') {
@@ -292,12 +293,7 @@ function Note({ children }) {
 
 /* ------------------------------ generators -------------------------- */
 function downloadText(filename, text, mime) {
-  const blob = new Blob([text], { type: `${mime};charset=utf-8` })
-  const url = URL.createObjectURL(blob)
-  const a = document.createElement('a')
-  a.href = url; a.download = filename
-  document.body.appendChild(a); a.click(); a.remove()
-  setTimeout(() => URL.revokeObjectURL(url), 1000)
+  return saveFile(filename, text, `${mime};charset=utf-8`)
 }
 
 function openPrint(html) {
@@ -331,7 +327,7 @@ async function exportStructures(meta, struct) {
     if (!rows.length) throw new Error('no docked complexes available — re-run the screen')
     for (const r of rows) {
       const { complex_pdb } = await api.getComplex(r.complex_id)
-      downloadText(`${safe(meta.target)}_${r.id}_complex.pdb`,
+      await downloadText(`${safe(meta.target)}_${r.id}_complex.pdb`,
         pdbHeader(meta, 'DOCKED COMPLEX (receptor + ligand)', { ligand: r.id, affinity: r.affinity }) + strip(complex_pdb) + '\nEND\n',
         'chemical/x-pdb')
       await wait(180) // let the browser process each download
@@ -339,7 +335,7 @@ async function exportStructures(meta, struct) {
     if (struct.receptor) {
       const { complex_pdb } = await api.getComplex(rows[0].complex_id)
       const rec = complex_pdb.split('\n').filter((l) => l.startsWith('ATOM') || l.startsWith('TER')).join('\n')
-      downloadText(`${safe(meta.target)}_receptor.pdb`, pdbHeader(meta, 'RECEPTOR') + rec + '\nEND\n', 'chemical/x-pdb')
+      await downloadText(`${safe(meta.target)}_receptor.pdb`, pdbHeader(meta, 'RECEPTOR') + rec + '\nEND\n', 'chemical/x-pdb')
     }
     return
   }
@@ -352,27 +348,20 @@ async function exportStructures(meta, struct) {
   const isLigand = (l) => l.startsWith('HETATM') && l.slice(17, 20).trim() === 'LIG'
   const base = `${safe(meta.target)}_${safe(meta.ligand)}`
   if (struct.complex) {
-    downloadText(`${base}_complex.pdb`, pdbHeader(meta, 'DOCKED COMPLEX (receptor + ligand)') +
+    await downloadText(`${base}_complex.pdb`, pdbHeader(meta, 'DOCKED COMPLEX (receptor + ligand)') +
       lines.filter((l) => isProtein(l) || isLigand(l) || l.startsWith('TER')).join('\n') + '\nEND\n', 'chemical/x-pdb')
   }
   if (struct.receptor) {
-    downloadText(`${base}_receptor.pdb`, pdbHeader(meta, 'RECEPTOR') +
+    await downloadText(`${base}_receptor.pdb`, pdbHeader(meta, 'RECEPTOR') +
       lines.filter((l) => isProtein(l) || l.startsWith('TER')).join('\n') + '\nEND\n', 'chemical/x-pdb')
   }
   if (struct.ligand) {
-    downloadText(`${base}_ligand.pdb`, pdbHeader(meta, 'LIGAND') + lines.filter(isLigand).join('\n') + '\nEND\n', 'chemical/x-pdb')
+    await downloadText(`${base}_ligand.pdb`, pdbHeader(meta, 'LIGAND') + lines.filter(isLigand).join('\n') + '\nEND\n', 'chemical/x-pdb')
   }
 }
 
 function downloadBlob(filename, blob) {
-  const url = URL.createObjectURL(blob)
-  const a = document.createElement('a')
-  a.href = url
-  a.download = filename
-  document.body.appendChild(a)
-  a.click()
-  a.remove()
-  setTimeout(() => URL.revokeObjectURL(url), 1500)
+  return saveFile(filename, blob)
 }
 
 async function exportMdPackage(engine, meta, md, pick) {
@@ -411,7 +400,7 @@ async function exportMdPackage(engine, meta, md, pick) {
 
   const blob = await zip.generateAsync({ type: 'blob' })
   const suffix = meta.mode === 'screen' ? (pick === '__top5__' ? '_top5' : pick === '__top__' ? '' : `_${pick}`) : ''
-  downloadBlob(`${safe(meta.target)}_${engine}_MD${suffix}.zip`, blob)
+  await downloadBlob(`${safe(meta.target)}_${engine}_MD${suffix}.zip`, blob)
 }
 
 function mdReadme(engine, meta, md, ligName, affinity) {

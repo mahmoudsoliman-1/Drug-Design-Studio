@@ -1,4 +1,5 @@
 import { useRef } from 'react'
+import { saveFile } from '../download.js'
 
 /* ------------------------------------------------------------------ */
 /*  Elegant 2D protein–ligand interaction diagram.                     */
@@ -238,11 +239,7 @@ function serialize(svgEl) {
   return new XMLSerializer().serializeToString(clone)
 }
 function saveBlob(blob, filename) {
-  const url = URL.createObjectURL(blob)
-  const a = document.createElement('a')
-  a.href = url; a.download = filename
-  document.body.appendChild(a); a.click(); a.remove()
-  setTimeout(() => URL.revokeObjectURL(url), 1000)
+  return saveFile(filename, blob)
 }
 function downloadSVG(svgEl, name) {
   if (!svgEl) return

@@ -7,8 +7,28 @@ PyInstaller.
 """
 import os
 import time
+import base64
 import threading
 import urllib.request
+
+
+class _Bridge:
+    """Exposed to the web UI as window.pywebview.api. Lets the browser-style
+    exports (which don't work inside WKWebView) save via a native dialog."""
+
+    def save_file(self, filename, content_b64):
+        import webview
+        try:
+            win = webview.windows[0]
+            result = win.create_file_dialog(webview.SAVE_DIALOG, save_filename=filename)
+            if not result:
+                return False
+            path = result[0] if isinstance(result, (list, tuple)) else result
+            with open(path, "wb") as f:
+                f.write(base64.b64decode(content_b64))
+            return True
+        except Exception:
+            return False
 
 
 def _run_engine(port):
@@ -42,6 +62,7 @@ def main():
     webview.create_window(
         "Drug Design Studio",
         "http://127.0.0.1:%d/" % port,
+        js_api=_Bridge(),
         width=1440, height=920, min_size=(1100, 720),
     )
     webview.start()   # blocks on the native GUI loop; returns when the window closes

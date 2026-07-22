@@ -4,6 +4,7 @@ import InteractionMap2D from './components/InteractionMap2D.jsx'
 import ExportModal from './components/ExportModal.jsx'
 import Ligand2D from './components/Ligand2D.jsx'
 import AgreementGate, { AGREEMENT_VERSION } from './components/Agreement.jsx'
+import { saveFile } from './download.js'
 import { LIBRARY, ScreeningLibraryPanel, LibraryCenter, ScreeningResults } from './components/VirtualScreening.jsx'
 import * as api from './api.js'
 import Logo from './components/Logo.jsx'
@@ -1036,10 +1037,7 @@ function ResultsView({ result, receptorName }) {
   }
   function downloadMin() {
     if (!minRes?.pdb) return
-    const blob = new Blob([minRes.pdb], { type: 'chemical/x-pdb' })
-    const url = URL.createObjectURL(blob); const a = document.createElement('a')
-    a.href = url; a.download = `${(receptorName || 'complex')}_minimized.pdb`; document.body.appendChild(a); a.click(); a.remove()
-    setTimeout(() => URL.revokeObjectURL(url), 1000)
+    saveFile(`${(receptorName || 'complex')}_minimized.pdb`, minRes.pdb, 'chemical/x-pdb')
   }
 
   const poses = result?.poses || []
