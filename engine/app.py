@@ -214,23 +214,43 @@ def _run_dock(jid):
         poses = res["poses"]
         if not poses:
             raise RuntimeError("no poses returned")
-        try:
-            ligand_2d, inter = analysis.analyze(rec["pdbqt"], poses[0]["pdbqt"])
-        except Exception:
-            ligand_2d, inter = None, interactions.detect(rec["pdbqt"], poses[0]["pdbqt"])
-        complex_pdb = _build_complex(rec["protein_pdb"], poses[0]["pdbqt"])
-        cid = uuid.uuid4().hex[:12]
-        _save_complex(cid, complex_pdb)
+        # build a complex + interactions for EVERY pose so the UI can switch poses
+        ligand_2d = None
+        pose_rows = []
+        for p in poses:
+            try:
+                l2d, inter_p = analysis.analyze(rec["pdbqt"], p["pdbqt"])
+                if ligand_2d is None:
+                    ligand_2d = l2d
+            except Exception:
+                inter_p = interactions.detect(rec["pdbqt"], p["pdbqt"])
+            cpdb = _build_complex(rec["protein_pdb"], p["pdbqt"])
+            cpid = uuid.uuid4().hex[:12]
+            _save_complex(cpid, cpdb)
+            pose_rows.append({
+                "pose": p["pose"], "affinity": p["affinity"],
+                "rmsd_lb": p["rmsd_lb"], "rmsd_ub": p["rmsd_ub"],
+                "complex_pdb": cpdb, "complex_id": cpid,
+                "interactions": inter_p,
+            })
         job["result"] = {
-            "complex_id": cid,
+            "complex_id": pose_rows[0]["complex_id"],
             "properties": props,
             "lipinski_pass": prep.lipinski_pass(props),
-            "poses": [{k: p[k] for k in ("pose", "affinity", "rmsd_lb", "rmsd_ub")} for p in poses],
-            "interactions": inter,
+            "poses": pose_rows,
+            "interactions": pose_rows[0]["interactions"],
             "ligand_2d": ligand_2d,
-            "complex_pdb": complex_pdb,
+            "complex_pdb": pose_rows[0]["complex_pdb"],
             "best_affinity": poses[0]["affinity"],
             "ligand_efficiency": round(poses[0]["affinity"] / max(1, props["mw"] / 12.0), 2),
+            "params": {
+                "engine": "AutoDock Vina 1.2.5",
+                "scoring": req.get("scoring", "vina"),
+                "exhaustiveness": req.get("exhaustiveness", 16),
+                "num_modes": req.get("num_modes", 9),
+                "center": req.get("center"), "size": req.get("size"),
+                "protonate": req.get("protonate", True), "ph": req.get("ph", 7.4),
+            },
         }
         job["status"] = "done"
     except Exception as e:
@@ -279,7 +299,17 @@ def _run_screen(jid):
             _save_job(job)
         ok = sorted([r for r in results if r.get("affinity") is not None], key=lambda r: r["affinity"])
         fail = [r for r in results if r.get("affinity") is None]
-        job["result"] = {"results": ok + fail, "n_ok": len(ok), "n_fail": len(fail)}
+        job["result"] = {
+            "results": ok + fail, "n_ok": len(ok), "n_fail": len(fail),
+            "params": {
+                "engine": "AutoDock Vina 1.2.5",
+                "scoring": req.get("scoring", "vina"),
+                "exhaustiveness": req.get("exhaustiveness", 8),
+                "num_modes": 5,
+                "center": req.get("center"), "size": req.get("size"),
+                "protonate": True, "ph": 7.4, "n_ligands": len(ligs),
+            },
+        }
         job["status"] = "done"
     except Exception as e:
         job["status"] = "error"

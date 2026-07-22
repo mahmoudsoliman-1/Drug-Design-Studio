@@ -1023,11 +1023,14 @@ function ResultsView({ result, receptorName }) {
   const [minMode, setMinMode] = useState('pocket')
   const [minBusy, setMinBusy] = useState(false)
   const [minRes, setMinRes] = useState(null) // {pdb, energy_before, energy_after}
+  const [selPose, setSelPose] = useState(0) // which docked pose is shown in the viewer
+
+  function selectPose(i) { setSelPose(i); setMinRes(null) } // reset any minimized overlay on switch
 
   async function runMinimize() {
     setMinBusy(true)
     try {
-      const r = await api.minimize({ complex_id: result?.complex_id, complex_pdb: result?.complex_id ? undefined : result?.complex_pdb, mode: minMode, forcefield: 'uff', steps: 500 })
+      const r = await api.minimize({ complex_id: sel.complex_id, complex_pdb: sel.complex_id ? undefined : selComplex, mode: minMode, forcefield: 'uff', steps: 500 })
       setMinRes(r)
     } catch (e) { /* surfaced below */ setMinRes({ error: String(e.message || e) }) } finally { setMinBusy(false) }
   }
@@ -1040,11 +1043,17 @@ function ResultsView({ result, receptorName }) {
   }
 
   const poses = result?.poses || []
-  const inter = result?.interactions || []
   const props = result?.properties || {}
   const best = result?.best_affinity
   const scatterData = useMemo(() => poses.map((p) => ({ x: p.rmsd_ub, y: p.affinity, z: 100 })), [poses])
   const ligName = props.formula || 'Ligand'
+
+  // selected pose (falls back to top-level fields for older results without per-pose data)
+  const sel = poses[selPose] || {}
+  const selComplex = sel.complex_pdb || result?.complex_pdb
+  const selInter = sel.interactions || result?.interactions || []
+  const selAff = sel.affinity ?? best
+  const selNum = sel.pose ?? (selPose + 1)
 
   return (
     <div className="flex min-w-0 flex-1 flex-col gap-4 overflow-auto">
@@ -1070,15 +1079,17 @@ function ResultsView({ result, receptorName }) {
         <div className="col-span-2 flex flex-col gap-4">
           <div className="glass rounded-2xl p-3">
             <div className="mb-2 flex items-center justify-between px-1">
-              <h3 className="text-[13px] font-semibold text-white">Docked Complex · Top pose</h3>
+              <h3 className="text-[13px] font-semibold text-white">
+                Docked Complex · Pose {selNum}{selPose === 0 ? ' (top)' : ''}
+              </h3>
               <div className="flex items-center gap-2">
                 <Toggle active={inter3D} onClick={() => setInter3D((v) => !v)} label="3D interactions" />
-                <span className="font-mono text-[12px] text-accent">{fmt(best)} kcal/mol</span>
+                <span className="font-mono text-[12px] text-accent">{fmt(selAff)} kcal/mol</span>
               </div>
             </div>
             <div className="h-[300px]">
               <MoleculeViewer style="cartoon" showLigand spin={false} showInteractions={inter3D}
-                pdb={minRes?.pdb || result?.complex_pdb} ligResn="LIG" />
+                pdb={minRes?.pdb || selComplex} ligResn="LIG" />
             </div>
             {/* quick geometry cleanup / minimization */}
             <div className="mt-2 flex flex-wrap items-center gap-2 border-t border-ink-700/60 px-1 pt-2">
@@ -1106,7 +1117,10 @@ function ResultsView({ result, receptorName }) {
           </div>
 
           <div className="glass rounded-2xl p-4">
-            <h3 className="mb-3 text-[13px] font-semibold text-white">Binding affinity by pose</h3>
+            <div className="mb-3 flex items-center justify-between">
+              <h3 className="text-[13px] font-semibold text-white">Binding affinity by pose</h3>
+              <span className="text-[10px] text-slate-500">click a bar to view that pose</span>
+            </div>
             <div className="h-[180px]">
               <ResponsiveContainer width="100%" height="100%">
                 <BarChart data={poses} margin={{ top: 4, right: 8, bottom: 0, left: -18 }}>
@@ -1114,8 +1128,9 @@ function ResultsView({ result, receptorName }) {
                   <XAxis dataKey="pose" tick={{ fill: '#64748b', fontSize: 11 }} axisLine={{ stroke: '#1c2842' }} tickLine={false} />
                   <YAxis tick={{ fill: '#64748b', fontSize: 11 }} axisLine={false} tickLine={false} />
                   <Tooltip cursor={{ fill: 'rgba(45,212,191,0.06)' }} contentStyle={tooltipStyle} />
-                  <Bar dataKey="affinity" radius={[4, 4, 0, 0]}>
-                    {poses.map((p, i) => <Cell key={i} fill={i === 0 ? '#2dd4bf' : '#1c6e63'} />)}
+                  <Bar dataKey="affinity" radius={[4, 4, 0, 0]} cursor="pointer"
+                    onClick={(data, index) => selectPose(typeof index === 'number' ? index : poses.findIndex((p) => p.pose === data?.pose))}>
+                    {poses.map((p, i) => <Cell key={i} fill={i === selPose ? '#2dd4bf' : '#1c6e63'} />)}
                   </Bar>
                 </BarChart>
               </ResponsiveContainer>
@@ -1126,15 +1141,15 @@ function ResultsView({ result, receptorName }) {
         <div className="flex flex-col gap-4">
           <div className="glass rounded-2xl p-4">
             <div className="mb-3 flex items-center justify-between">
-              <h3 className="text-[13px] font-semibold text-white">Key interactions</h3>
+              <h3 className="text-[13px] font-semibold text-white">Key interactions <span className="text-[11px] font-normal text-slate-500">· pose {selNum}</span></h3>
               <button onClick={() => setMap2D(true)}
                 className="flex items-center gap-1.5 rounded-lg bg-accent/10 px-2.5 py-1.5 text-[11px] font-semibold text-accent ring-1 ring-accent/30 hover:bg-accent/20">
                 <MapIcon className="h-3.5 w-3.5" /> 2D diagram
               </button>
             </div>
             <div className="max-h-[190px] space-y-2 overflow-auto">
-              {inter.length === 0 && <p className="text-[11px] text-slate-500">No close contacts detected in the top pose.</p>}
-              {inter.map((it, i) => (
+              {selInter.length === 0 && <p className="text-[11px] text-slate-500">No close contacts detected in this pose.</p>}
+              {selInter.map((it, i) => (
                 <div key={i} className="flex items-center gap-2.5">
                   <span className="h-2.5 w-2.5 shrink-0 rounded-full" style={{ background: INT_COLORS[it.type] || '#64748b' }} />
                   <span className="font-mono text-[12px] text-slate-200">{it.residue}</span>
@@ -1167,15 +1182,16 @@ function ResultsView({ result, receptorName }) {
 
       {map2D && (
         <Modal onClose={() => setMap2D(false)}>
-          <InteractionMap2D ligand={ligName} pose={1} affinity={best} interactions={inter} ligand2d={result?.ligand_2d} />
+          <InteractionMap2D ligand={ligName} pose={selNum} affinity={selAff} interactions={selInter} ligand2d={result?.ligand_2d} />
         </Modal>
       )}
 
       {exportOpen && (
         <ExportModal onClose={() => setExportOpen(false)} payload={{
-          mode: 'single', target: (receptorName || 'Receptor'), pdb: (receptorName || ''), scoring: 'vina', exhaustiveness: 16,
-          ligand: ligName, pose: 1, affinity: best, complex_pdb: result?.complex_pdb,
-          poses, interactions: inter, rows: [{ name: ligName, affinity: best, mw: props.mw, logp: props.logp, qed: props.qed }],
+          mode: 'single', target: (receptorName || 'Receptor'), pdb: (receptorName || ''),
+          scoring: result?.params?.scoring || 'vina', exhaustiveness: result?.params?.exhaustiveness ?? 16, params: result?.params,
+          ligand: ligName, pose: selNum, affinity: selAff, complex_pdb: selComplex,
+          poses, interactions: selInter, rows: [{ name: ligName, affinity: best, mw: props.mw, logp: props.logp, qed: props.qed }],
         }} />
       )}
     </div>

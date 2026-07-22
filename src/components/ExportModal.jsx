@@ -538,6 +538,60 @@ function buildMDScript(engine, meta, md) {
   ].join('\n')
 }
 
+// Detailed, publication-ready methodology with numbered references.
+function methodsHTML(meta) {
+  const p = meta.params || {}
+  const scoring = meta.scoring || p.scoring || 'vina'
+  const scoringName = scoring === 'vinardo' ? 'Vinardo' : 'Vina'
+  const exh = meta.exhaustiveness ?? p.exhaustiveness ?? 16
+  const nModes = p.num_modes ?? (meta.poses ? meta.poses.length : 9)
+  const c = p.center, s = p.size
+  const box = (c && s)
+    ? `a grid box of ${s.x}&thinsp;&times;&thinsp;${s.y}&thinsp;&times;&thinsp;${s.z}&nbsp;&Aring; centred at (${c.x}, ${c.y}, ${c.z})`
+    : `a grid box enclosing the binding site`
+  const ph = p.ph ?? 7.4
+  const protonated = p.protonate === false
+    ? `used in the protonation state provided`
+    : `assigned protonation states appropriate to a physiological pH of ${ph} using the Open Babel pK<sub>a</sub> model<sup>3</sup>`
+  const screening = meta.mode === 'screen'
+
+  const R = [
+    'Soliman ME. Drug Design Studio (DDS): a robust, cross-platform graphical interface for molecular docking, virtual screening and protein&ndash;ligand interaction analysis. <i>J Comput Chem.</i> 2026 (under review).',
+    'Berman HM, Westbrook J, Feng Z, <i>et al.</i> The Protein Data Bank. <i>Nucleic Acids Res.</i> 2000;28:235&ndash;242.',
+    "O'Boyle NM, Banck M, James CA, <i>et al.</i> Open Babel: An open chemical toolbox. <i>J Cheminform.</i> 2011;3:33.",
+    'Gasteiger J, Marsili M. Iterative partial equalization of orbital electronegativity &mdash; a rapid access to atomic charges. <i>Tetrahedron.</i> 1980;36:3219&ndash;3228.',
+    'Halgren TA. Merck molecular force field. I. Basis, form, scope, parameterization, and performance of MMFF94. <i>J Comput Chem.</i> 1996;17:490&ndash;519.',
+    'Trott O, Olson AJ. AutoDock Vina: improving the speed and accuracy of docking with a new scoring function, efficient optimization, and multithreading. <i>J Comput Chem.</i> 2010;31:455&ndash;461.',
+    'Eberhardt J, Santos-Martins D, Tillack AF, Forli S. AutoDock Vina 1.2.0: new docking methods, expanded force field, and Python bindings. <i>J Chem Inf Model.</i> 2021;61:3891&ndash;3898.',
+    'Quiroga R, Villarreal MA. Vinardo: a scoring function based on AutoDock Vina improves scoring, docking, and virtual screening. <i>PLoS One.</i> 2016;11:e0155183.',
+  ]
+
+  const para = (body) => `<p style="font-size:12px;line-height:1.75;color:#334155;margin:8px 0">${body}</p>`
+
+  const intro = para(
+    `Drug Design Studio (DDS)<sup>1</sup> was used as the graphical interface for system preparation, docking, and analysis of the ${screening ? 'virtual-screening' : 'molecular-docking'} calculations. The three-dimensional structure of <b>${meta.target}</b>${meta.pdb ? ` (Protein Data Bank<sup>2</sup> entry <code>${meta.pdb}</code>)` : ''} was used as the receptor. Crystallographic waters and heteroatoms were removed (unless explicitly retained), polar hydrogen atoms were added, and Gasteiger&ndash;Marsili partial atomic charges<sup>4</sup> were assigned using Open Babel<sup>3</sup>. The prepared receptor was converted to the AutoDock PDBQT format and treated as rigid throughout docking.`)
+
+  const ligand = para(
+    `Ligands were processed with RDKit and ${protonated}. A three-dimensional conformer was generated with the ETKDG distance-geometry algorithm and energy-minimised with the Merck Molecular Force Field (MMFF94)<sup>5</sup>. Rotatable bonds and Gasteiger&ndash;Marsili charges<sup>4</sup> were assigned, and the ligand was converted to PDBQT format.`)
+
+  const dock = para(
+    `Docking was performed with <b>AutoDock Vina 1.2.5</b><sup>6,7</sup> employing the <b>${scoringName}</b> scoring function${scoring === 'vinardo' ? '<sup>8</sup>' : ''}. The search space was defined as ${box}. An exhaustiveness of <b>${exh}</b> was used and up to <b>${nModes}</b> binding modes were generated. Poses were ranked by their predicted binding free energy (kcal&thinsp;mol<sup>&minus;1</sup>)${screening ? '' : ', and the top-ranked pose was retained for interaction analysis'}.`)
+
+  const screen = screening ? para(
+    `Each of the ${p.n_ligands || 'library'} compounds was prepared and docked independently under identical parameters, and compounds were ranked by their best predicted binding affinity. Drug-likeness was assessed using Lipinski's rule of five and the quantitative estimate of drug-likeness (QED).`) : ''
+
+  const inter = para(
+    `Interactions between the top-ranked pose and the receptor were identified geometrically from the three-dimensional coordinates: hydrogen bonds were assigned for polar donor&ndash;acceptor (N/O&middot;&middot;&middot;N/O) distances of 2.4&ndash;3.5&nbsp;&Aring;, salt bridges for oppositely charged groups within 4.0&nbsp;&Aring;, and hydrophobic contacts for carbon&ndash;carbon distances &le;&nbsp;4.0&nbsp;&Aring;.`)
+
+  const refs = `<h2>References</h2><ol style="font-size:11px;line-height:1.6;color:#475569;padding-left:18px;margin-top:6px">${R.map((r) => `<li style="margin:3px 0">${r}</li>`).join('')}</ol>`
+
+  const disclaimer = `<p style="font-size:10.5px;color:#94a3b8;font-style:italic;margin-top:16px;border-top:1px dashed #e2e8f0;padding-top:8px">
+    * This computational methods section is provided as a <b>guidance template only</b>. Please rewrite and adapt it in your own
+    words to reflect the specifics of your own study before including it in any publication &mdash; do not copy it verbatim.</p>`
+
+  return `<h2>Computational methods&nbsp;<span style="color:#0f766e">*</span></h2>${intro}${ligand}${dock}${screen}${inter}${refs}${disclaimer}`
+}
+
 function buildReportHTML(meta, sections) {
   const A = '#0d9488'
   const poses = meta.poses || []
@@ -598,14 +652,7 @@ function buildReportHTML(meta, sections) {
     ${rows.map((c, i) => `<tr><td>${i + 1}</td><td>${c.name}</td><td class="${i === 0 ? 'best' : ''}">${c.affinity}</td><td>${c.mw ?? '—'}</td><td>${c.logp ?? '—'}</td><td>${c.qed ?? '—'}</td></tr>`).join('')}
     </tbody></table>` : ''
 
-  const methods = sections.methods ? `
-    <h2>Methods &amp; parameters</h2>
-    <p style="font-size:12px;line-height:1.7;color:#334155">
-      Molecular docking was performed with <b>AutoDock Vina 1.2.x</b> using the <code>${meta.scoring}</code> scoring function
-      (exhaustiveness ${meta.exhaustiveness}). The receptor <b>${meta.target}</b> (PDB <code>${meta.pdb}</code>) was prepared by
-      removing crystallographic waters, adding polar hydrogens and assigning Gasteiger charges. Ligands were prepared with 3D
-      conformer generation and protonation at pH 7.4. Poses were ranked by predicted binding free energy (kcal/mol).
-    </p>` : ''
+  const methods = sections.methods ? methodsHTML(meta) : ''
 
   return `<!doctype html><html><head><meta charset="utf-8"><title>${meta.target} — DDS Report</title>${style}</head>
   <body>

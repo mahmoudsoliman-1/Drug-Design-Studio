@@ -374,7 +374,8 @@ export function ScreeningResults({ result, receptor, box, scoring }) {
 
       {exportOpen && (
         <ExportModal onClose={() => setExportOpen(false)} payload={{
-          mode: 'screen', target, pdb: target, scoring: scoring || 'vina', exhaustiveness: 8,
+          mode: 'screen', target, pdb: target,
+          scoring: result?.params?.scoring || scoring || 'vina', exhaustiveness: result?.params?.exhaustiveness ?? 8, params: result?.params,
           ligand: ranked[0].id, pose: 1, affinity: ranked[0].affinity, interactions: [],
           rows: ranked.map((l) => ({ name: l.id, affinity: l.affinity, mw: l.mw, logp: l.logp, qed: l.qed })),
           screenRows: ranked.slice(0, 10).map((l) => ({ id: l.id, affinity: l.affinity, complex_id: l.complex_id })),
