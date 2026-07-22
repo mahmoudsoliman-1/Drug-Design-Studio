@@ -1,6 +1,6 @@
 ; Inno Setup script for Drug Design Studio (packages the PyInstaller onedir build).
 #define MyAppName "Drug Design Studio"
-#define MyAppVersion "1.1.0"
+#define MyAppVersion "1.0.0"
 #define MyAppPublisher "Prof. Mahmoud E. Soliman, UKZN"
 #define MyAppExeName "DrugDesignStudio.exe"
 
