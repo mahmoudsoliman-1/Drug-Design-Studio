@@ -4,6 +4,7 @@ import InteractionMap2D from './components/InteractionMap2D.jsx'
 import ExportModal from './components/ExportModal.jsx'
 import Ligand2D from './components/Ligand2D.jsx'
 import AgreementGate, { AGREEMENT_VERSION } from './components/Agreement.jsx'
+import DocsModal, { DOC_VERSION } from './components/Documentation.jsx'
 import { saveFile } from './download.js'
 import { LIBRARY, ScreeningLibraryPanel, LibraryCenter, ScreeningResults } from './components/VirtualScreening.jsx'
 import * as api from './api.js'
@@ -67,7 +68,9 @@ const COMP_COLOR = { protein: '#2dd4bf', nucleic: '#a78bfa', ligand: '#f472b6', 
 const DEFAULT_SMILES = 'CC(C)Cc1ccc(cc1)C(C)C(=O)Nc1ncccn1'
 
 export default function App() {
-  const [agreed, setAgreed] = useState(() => { try { return localStorage.getItem('dds_agreed') === AGREEMENT_VERSION } catch { return false } })
+  // null = still checking; true = accepted; false = show the gate. localStorage is a fast
+  // optimistic cache; the engine's on-disk marker is the durable, OS-independent source of truth.
+  const [agreed, setAgreed] = useState(() => { try { return localStorage.getItem('dds_agreed') === AGREEMENT_VERSION ? true : null } catch { return null } })
   const [aiOpen, setAiOpen] = useState(true) // AI Insights open by default; user can close per session
   const [mode, setMode] = useState('single') // 'single' | 'screen'
   const [active, setActive] = useState('receptor')
@@ -99,6 +102,16 @@ export default function App() {
   const [receptorPh, setReceptorPh] = useState(7.4) // pH for receptor protonation (Open Babel)
   const [ligPreview, setLigPreview] = useState({ status: 'idle', data: null, msg: '' }) // live 2D+3D ligand preview
 
+  // covalent docking (geometry-guided): target a reactive residue, rank by warhead reach
+  const [covalent, setCovalent] = useState(false)
+  const [covResidue, setCovResidue] = useState(null)      // nucleophile key "chain:resn:resi"
+  const [covResidues, setCovResidues] = useState([])       // nucleophiles inside the box (from engine)
+  const [covResLoading, setCovResLoading] = useState(false)
+  const [covOverride, setCovOverride] = useState('auto')   // 'auto' | warhead name
+  const [covMaxDist, setCovMaxDist] = useState(3.5)
+  const [covMode, setCovMode] = useState('geometry')       // 'geometry' | 'tethered'
+  const [covWarheads, setCovWarheads] = useState([])       // warhead catalog for the override menu
+
   // background jobs
   const [jobs, setJobs] = useState([])
   const [jobsOpen, setJobsOpen] = useState(false)
@@ -114,6 +127,28 @@ export default function App() {
     let ok = true
     api.health().then(() => ok && setEngine('online')).catch(() => ok && setEngine('offline'))
     if (activeRef.current) setRunning(true)
+    return () => { ok = false }
+  }, [])
+
+  // reconcile the licence agreement with the engine's on-disk marker (durable on mac & windows)
+  useEffect(() => {
+    let ok = true
+    api.getAgreement().then((r) => {
+      if (!ok) return
+      if (r.agreed_version === AGREEMENT_VERSION) {
+        setAgreed(true)
+        try { localStorage.setItem('dds_agreed', AGREEMENT_VERSION) } catch { /* ignore */ }
+      } else {
+        // engine hasn't recorded it; if this browser already had it, migrate — else show the gate
+        setAgreed((prev) => {
+          if (prev === true) { api.setAgreement(AGREEMENT_VERSION).catch(() => {}); return true }
+          return false
+        })
+      }
+    }).catch(() => {
+      // engine unreachable — fall back to the localStorage cache only
+      if (ok) setAgreed((prev) => (prev === true ? true : false))
+    })
     return () => { ok = false }
   }, [])
 
@@ -170,6 +205,33 @@ export default function App() {
     return () => { cancelled = true; clearTimeout(t) }
   }, [ligandSmiles, ligandFile])
 
+  // warhead catalog (once, for the covalent override menu)
+  useEffect(() => {
+    if (engine !== 'online') return
+    let ok = true
+    api.covalentWarheads().then((r) => ok && setCovWarheads(r.warheads || [])).catch(() => {})
+    return () => { ok = false }
+  }, [engine])
+
+  // nucleophilic residues inside the current box — refreshed when covalent is on
+  // and the receptor or grid changes; auto-selects the residue nearest the centre
+  useEffect(() => {
+    if (!covalent || !receptor?.receptor_id || !box) return
+    let cancelled = false
+    setCovResLoading(true)
+    const t = setTimeout(async () => {
+      try {
+        const r = await api.covalentResidues(receptor.receptor_id, box)
+        if (cancelled) return
+        const list = r.residues || []
+        setCovResidues(list)
+        setCovResidue((cur) => (cur && list.some((n) => n.key === cur) ? cur : (list[0]?.key || null)))
+      } catch { if (!cancelled) setCovResidues([]) }
+      finally { if (!cancelled) setCovResLoading(false) }
+    }, 300)
+    return () => { cancelled = true; clearTimeout(t) }
+  }, [covalent, receptor?.receptor_id, box?.center?.x, box?.center?.y, box?.center?.z, box?.size?.x, box?.size?.y, box?.size?.z])
+
   const activeJob = jobs.find((j) => j.job_id === activeJobId) || null
   // true whenever the awaited job is still running on the server — survives tab/mode
   // navigation (unlike the transient local `running` flag), so the indicators persist
@@ -192,6 +254,19 @@ export default function App() {
   const steps = isScreen ? STEPS_SCREEN : STEPS_SINGLE
   const bestAffinity = isScreen ? screenRes?.results?.[0]?.affinity : dockRes?.best_affinity
 
+  // covalent summary shown on the left-panel mode card
+  const covSel = covResidues.find((r) => r.key === covResidue) || null
+  const covTargetLabel = covSel ? `${covSel.residue} · ${covSel.atom_label}` : null
+  const covWarheadLabel = covOverride !== 'auto'
+    ? (covWarheads.find((w) => w.name === covOverride)?.label || null)
+    : (isScreen ? 'auto per compound' : (ligPreview.data?.warhead?.label || null))
+
+  // uploaded/SMILES ligand placed at the box centre for a pre-docking preview
+  const placedLigandPdb = useMemo(
+    () => (box && ligPreview.data?.ligand_pdb ? placeLigandInBox(ligPreview.data.ligand_pdb, box.center) : null),
+    [ligPreview.data?.ligand_pdb, box?.center?.x, box?.center?.y, box?.center?.z],
+  )
+
   function switchMode(m) {
     setMode(m); setActive('receptor'); setHasResults(false); setRunning(false)
     setDockRes(null); setScreenRes(null); setErrorMsg('')
@@ -204,7 +279,7 @@ export default function App() {
       setReceptor({ ...r, name: pdbId.toUpperCase() })
       setBox({ center: { ...r.center }, size: { ...r.box } })
       if (r.native_ligand_smiles) { setLigandSmiles(r.native_ligand_smiles); setLigandFile(null) }
-      setCleared(false); setRemovedComp([])
+      setCleared(false); setRemovedComp([]); setCovResidue(null); setCovResidues([])
     } catch (e) { setErrorMsg(engErr(e)) } finally { setBusy('') }
   }
   async function loadReceptorFile(file) {
@@ -214,12 +289,22 @@ export default function App() {
       setReceptor({ ...r, name: file.name })
       setBox({ center: { ...r.center }, size: { ...r.box } })
       if (r.native_ligand_smiles) { setLigandSmiles(r.native_ligand_smiles); setLigandFile(null) }
-      setCleared(false); setRemovedComp([])
+      setCleared(false); setRemovedComp([]); setCovResidue(null); setCovResidues([])
     } catch (e) { setErrorMsg(engErr(e)) } finally { setBusy('') }
   }
   function clearReceptor() {
     setReceptor(null); setBox(null); setDockRes(null); setScreenRes(null)
     setHasResults(false); setCleared(true); setActive('receptor'); setErrorMsg(''); setRemovedComp([])
+    setCovResidue(null); setCovResidues([])
+  }
+
+  // full reset — clear the loaded target, ligand, results and covalent target so the
+  // user can start a fresh run/project. Background jobs are kept (available in Jobs).
+  function clearWorkspace() {
+    clearReceptor()
+    setLigandFile(null); setLigandSmiles(DEFAULT_SMILES)
+    setCovalent(false); setCovMode('geometry')
+    setActiveJob(null); setRunning(false)
   }
 
   // re-prepare the loaded receptor from its stored structure (waters/ions + removed
@@ -257,6 +342,7 @@ export default function App() {
     setErrorMsg('')
     if (engine !== 'online') { setErrorMsg('Engine offline — start the DDS engine (see banner).'); return }
     if (!receptor || !box) { setErrorMsg('Prepare a receptor first.'); setActive('receptor'); return }
+    if (covalent && !covResidue) { setErrorMsg('Select a reactive residue for covalent docking (Binding Site step).'); setActive('site'); return }
     if (isScreen) return runScreening()
     if (!ligandFile && !ligandSmiles.trim()) { setErrorMsg('Provide a ligand (SMILES or file).'); setActive('ligands'); return }
     setRunning(true)
@@ -265,10 +351,23 @@ export default function App() {
       const { job_id } = await api.dock({
         receptor_id: receptor.receptor_id, ...lig, protonate, ph: 7.4,
         center: box.center, size: box.size, scoring, exhaustiveness, num_modes: 9,
-        label: `${receptor.name} · docking`,
+        ...covalentPayload(),
+        label: `${receptor.name} · ${covalent ? 'covalent ' : ''}docking`,
       })
       setActiveJob(job_id)
     } catch (e) { setErrorMsg(engErr(e)); setRunning(false) }
+  }
+
+  // covalent params shared by single docking and screening
+  function covalentPayload() {
+    if (!covalent) return { covalent: false }
+    return {
+      covalent: true,
+      covalent_residue: covResidue,
+      covalent_warhead: covOverride !== 'auto' ? covOverride : null,
+      covalent_max_dist: covMaxDist,
+      covalent_mode: covMode,
+    }
   }
 
   function clearLigand() { setLigandSmiles(''); setLigandFile(null) }
@@ -281,15 +380,22 @@ export default function App() {
       const { job_id } = await api.screen({
         receptor_id: receptor.receptor_id, ligands: ligs,
         center: box.center, size: box.size, scoring, exhaustiveness: Math.min(exhaustiveness, 8),
-        label: `${receptor.name} · screen ${ligs.length}`,
+        ...covalentPayload(),
+        label: `${receptor.name} · ${covalent ? 'covalent ' : ''}screen ${ligs.length}`,
       })
       setActiveJob(job_id)
     } catch (e) { setErrorMsg(engErr(e)); setRunning(false) }
   }
 
+  if (agreed === null) {
+    return <div className="grid h-full w-full place-items-center bg-ink-950">
+      <span className="h-6 w-6 animate-spin rounded-full border-2 border-accent/30 border-t-accent" />
+    </div>
+  }
   if (!agreed) {
     return <AgreementGate onAgree={() => {
       try { localStorage.setItem('dds_agreed', AGREEMENT_VERSION) } catch { /* ignore */ }
+      api.setAgreement(AGREEMENT_VERSION).catch(() => {})
       setAgreed(true)
     }} />
   }
@@ -297,14 +403,19 @@ export default function App() {
   return (
     <div className="flex h-full w-full bg-ink-950 text-slate-200">
       <Sidebar active={active} setActive={setActive} hasResults={hasResults}
-        steps={steps} mode={mode} switchMode={switchMode} />
+        steps={steps} mode={mode} switchMode={switchMode}
+        cov={{
+          enabled: covalent, onToggle: () => setCovalent((v) => !v),
+          targetLabel: covTargetLabel, warheadLabel: covWarheadLabel, hasReceptor: !!receptor,
+          mode: covMode,
+        }} />
 
       <div className="flex min-w-0 flex-1 flex-col">
-        <TopBar onRun={runDocking} running={isRunning} isScreen={isScreen}
+        <TopBar onRun={runDocking} running={isRunning} isScreen={isScreen} covalent={covalent}
           bestAffinity={hasResults ? bestAffinity : null} receptorName={receptor?.name}
           ligandCount={isScreen ? parseSmilesLibrary(screenSmiles).length : 1} scoring={scoring}
           activeJob={activeJob} runningCount={jobs.filter((j) => j.status === 'running').length}
-          onOpenJobs={() => setJobsOpen(true)} />
+          onOpenJobs={() => setJobsOpen(true)} onClear={clearWorkspace} hasReceptor={!!receptor || hasResults} />
 
         {engine === 'offline' && <EngineBanner />}
         {errorMsg && <ErrorBar msg={errorMsg} onClose={() => setErrorMsg('')} />}
@@ -349,7 +460,12 @@ export default function App() {
                           showInteractions={ligStep ? false : showInter}
                           pdb={ligStep ? ligPreview.data.ligand_pdb : (receptor?.display_pdb || null)}
                           empty={ligStep ? false : !receptor} ligResn={ligStep ? 'LIG' : (receptor?.ligand_resn || 'MK1')}
-                          box={box} showBox={!ligStep && active === 'site'} />
+                          box={box} showBox={!ligStep && active === 'site'}
+                          overlayLigand={!isScreen && !ligStep && (active === 'site' || active === 'dock') ? placedLigandPdb : null}
+                          covalentTarget={!ligStep && covalent && active === 'site' && covSel ? {
+                            chain: covSel.chain, resi: covSel.resi, residueLabel: covSel.residue,
+                            atomLabel: covSel.atom_label, nuc: [covSel.x, covSel.y, covSel.z],
+                          } : null} />
                       )
                     })()}
                   </div>
@@ -376,7 +492,16 @@ export default function App() {
                     removedComp={removedComp} onToggleComponent={toggleComponent}
                     receptorPh={receptorPh} onChangePh={setReceptorPh} onCommitPh={commitReceptorPh}
                     onFetchReceptor={loadReceptorById} onUploadReceptor={loadReceptorFile}
-                    onClearReceptor={clearReceptor} />
+                    onClearReceptor={clearReceptor}
+                    cov={{
+                      enabled: covalent, onToggle: () => setCovalent((v) => !v),
+                      residues: covResidues, residue: covResidue, setResidue: setCovResidue,
+                      loading: covResLoading, warheads: covWarheads,
+                      override: covOverride, setOverride: setCovOverride,
+                      maxDist: covMaxDist, setMaxDist: setCovMaxDist,
+                      mode: covMode, setMode: setCovMode,
+                      detected: ligPreview.data?.warhead, isScreen,
+                    }} />
                 )}
                 <AiPanel active={active} mode={mode} receptor={receptor} box={box}
                   ligProps={ligPreview.data?.properties || dockRes?.properties}
@@ -389,6 +514,7 @@ export default function App() {
 
       {jobsOpen && <JobsPanel jobs={jobs} activeJobId={activeJobId} onClose={() => setJobsOpen(false)}
         onOpen={openJob} onDelete={removeJob} />}
+
     </div>
   )
 }
@@ -437,6 +563,25 @@ function engErr(e) {
   return m === 'ENGINE_OFFLINE' ? 'Cannot reach the DDS engine. Is it running on port 8765?' : m
 }
 
+// Translate a ligand PDB block so its centroid sits at the grid-box centre — a
+// pre-docking placement so the compound appears inside the search box.
+function placeLigandInBox(pdbText, center) {
+  const lines = (pdbText || '').split('\n')
+  const isAtom = (l) => l.startsWith('ATOM') || l.startsWith('HETATM')
+  const xyz = (l) => [parseFloat(l.slice(30, 38)), parseFloat(l.slice(38, 46)), parseFloat(l.slice(46, 54))]
+  const atoms = lines.filter(isAtom).map(xyz).filter((a) => a.every((v) => !isNaN(v)))
+  if (!atoms.length) return pdbText
+  const c = atoms.reduce((s, a) => [s[0] + a[0], s[1] + a[1], s[2] + a[2]], [0, 0, 0]).map((v) => v / atoms.length)
+  const d = [center.x - c[0], center.y - c[1], center.z - c[2]]
+  const f8 = (v) => v.toFixed(3).padStart(8)
+  return lines.map((l) => {
+    if (!isAtom(l)) return l
+    const [x, y, z] = xyz(l)
+    if ([x, y, z].some((v) => isNaN(v))) return l
+    return l.slice(0, 30) + f8(x + d[0]) + f8(y + d[1]) + f8(z + d[2]) + l.slice(54)
+  }).join('\n')
+}
+
 function parseSmilesLibrary(text) {
   return (text || '').split('\n').map((line) => line.trim()).filter(Boolean).map((line, i) => {
     const parts = line.split(/\s+/)
@@ -465,8 +610,9 @@ function ErrorBar({ msg, onClose }) {
 /* ------------------------------------------------------------------ */
 /*  Sidebar                                                            */
 /* ------------------------------------------------------------------ */
-function Sidebar({ active, setActive, hasResults, steps, mode, switchMode }) {
+function Sidebar({ active, setActive, hasResults, steps, mode, switchMode, cov }) {
   const [cite, setCite] = useState(false)
+  const [docs, setDocs] = useState(false)
   return (
     <div className="flex w-[248px] shrink-0 flex-col border-r border-ink-700/60 bg-ink-900/60">
       <div className="flex items-center gap-3 px-5 py-5">
@@ -484,6 +630,13 @@ function Sidebar({ active, setActive, hasResults, steps, mode, switchMode }) {
           <ModeTab active={mode === 'screen'} onClick={() => switchMode('screen')} icon={LayersIcon} label="Virtual" sub="Screening" />
         </div>
       </div>
+
+      {/* Covalent mode card */}
+      {cov && (
+        <div className="mt-2 px-3">
+          <CovalentModeCard {...cov} onConfigure={() => setActive('site')} />
+        </div>
+      )}
 
       <div className="px-4 pb-2 pt-4 text-[10px] font-semibold uppercase tracking-widest text-slate-500">Workflow</div>
       <nav className="flex flex-col gap-1 px-3">
@@ -510,20 +663,64 @@ function Sidebar({ active, setActive, hasResults, steps, mode, switchMode }) {
         })}
       </nav>
 
-      <div className="mt-auto p-4">
-        <button onClick={() => setCite(true)}
-          className="flex w-full items-center gap-2.5 rounded-xl bg-ink-800/60 px-3 py-2.5 text-left ring-1 ring-ink-700/60 transition hover:bg-ink-800 hover:ring-accent/40">
-          <div className="grid h-7 w-7 place-items-center rounded-lg bg-accent/15">
-            <QuoteIcon className="h-4 w-4 text-accent" />
-          </div>
-          <div className="min-w-0">
-            <div className="text-[12px] font-semibold text-slate-200">Cite DDS</div>
-            <div className="text-[10px] text-slate-500">How to cite this software</div>
-          </div>
+      <div className="mt-auto p-3">
+        <button onClick={() => setDocs(true)}
+          className="flex w-full items-center gap-2 rounded-lg px-2.5 py-1.5 text-left text-slate-300 transition hover:bg-ink-800/70 hover:text-white">
+          <DocsIcon className="h-4 w-4 text-accent" />
+          <span className="text-[12px] font-medium">Documentation</span>
         </button>
+        <button onClick={() => setCite(true)}
+          className="flex w-full items-center gap-2 rounded-lg px-2.5 py-1.5 text-left text-slate-300 transition hover:bg-ink-800/70 hover:text-white">
+          <QuoteIcon className="h-4 w-4 text-accent" />
+          <span className="text-[12px] font-medium">Cite DDS</span>
+        </button>
+        <div className="mt-1.5 px-2.5 text-[10px] text-slate-600">DDS {DOC_VERSION}</div>
       </div>
 
       {cite && <CiteModal onClose={() => setCite(false)} />}
+      {docs && <DocsModal onClose={() => setDocs(false)} />}
+    </div>
+  )
+}
+
+// Left-panel covalent switch — sits under Single/Virtual. Turning it on reveals
+// the target controls (residue, warhead, distance) in the Binding Site step.
+function CovalentModeCard({ enabled, onToggle, targetLabel, warheadLabel, hasReceptor, mode, onConfigure }) {
+  return (
+    <div className={`rounded-xl border p-2.5 transition ${enabled
+      ? 'border-accent/50 bg-accent/[0.07] shadow-[0_0_22px_-8px_rgba(45,212,191,0.65)]'
+      : 'border-ink-700/60 bg-ink-800/40'}`}>
+      <div className="flex items-center gap-2.5">
+        <div className={`grid h-8 w-8 shrink-0 place-items-center rounded-lg transition ${enabled ? 'bg-accent text-ink-950' : 'bg-ink-700 text-slate-400'}`}>
+          <LinkIcon className="h-4 w-4" />
+        </div>
+        <button onClick={onToggle} className="min-w-0 flex-1 text-left">
+          <div className="text-[12.5px] font-semibold text-white">Covalent docking</div>
+          <div className="text-[10px] text-slate-500">{enabled ? (mode === 'tethered' ? 'Bond-restrained · tethered' : 'Geometry-guided') : 'Off · standard docking'}</div>
+        </button>
+        <button onClick={onToggle} title={enabled ? 'Turn off' : 'Turn on'}
+          className={`relative h-[20px] w-[36px] shrink-0 rounded-full transition ${enabled ? 'bg-accent' : 'bg-ink-600'}`}>
+          <span className={`absolute top-[2px] h-[16px] w-[16px] rounded-full bg-ink-950 shadow transition-all ${enabled ? 'right-[2px]' : 'left-[2px]'}`} />
+        </button>
+      </div>
+      {enabled && (
+        <button onClick={onConfigure}
+          className="mt-2 flex w-full items-center gap-2 rounded-lg bg-ink-900/60 px-2.5 py-1.5 text-left ring-1 ring-accent/20 transition hover:ring-accent/40">
+          {targetLabel ? (
+            <>
+              <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-accent" />
+              <span className="min-w-0 flex-1 truncate font-mono text-[11px] text-accent">{targetLabel}</span>
+              {warheadLabel && <span className="max-w-[96px] shrink-0 truncate text-[9.5px] text-slate-500">{warheadLabel}</span>}
+            </>
+          ) : (
+            <>
+              <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-amber" />
+              <span className="min-w-0 flex-1 text-[10.5px] text-amber">{hasReceptor ? 'Pick a residue in Binding Site' : 'Load a receptor to set target'}</span>
+              <ChevronRightIcon className="h-3.5 w-3.5 shrink-0 text-slate-500" />
+            </>
+          )}
+        </button>
+      )}
     </div>
   )
 }
@@ -545,7 +742,7 @@ function ModeTab({ active, onClick, icon: Icon, label, sub }) {
 /* ------------------------------------------------------------------ */
 /*  Top bar                                                            */
 /* ------------------------------------------------------------------ */
-function TopBar({ onRun, running, bestAffinity, isScreen, receptorName, ligandCount, scoring, activeJob, runningCount, onOpenJobs }) {
+function TopBar({ onRun, running, bestAffinity, isScreen, covalent, receptorName, ligandCount, scoring, activeJob, runningCount, onOpenJobs, onClear, hasReceptor }) {
   return (
     <header className="flex items-center gap-4 border-b border-ink-700/60 bg-ink-900/40 px-5 py-3">
       <div className="flex items-center gap-2.5">
@@ -585,6 +782,12 @@ function TopBar({ onRun, running, bestAffinity, isScreen, receptorName, ligandCo
       )}
 
       <div className="ml-auto flex items-center gap-2">
+        {hasReceptor && (
+          <button onClick={onClear} title="Clear workspace and start a new run, background jobs keep running — track them in Jobs."
+            className="flex items-center gap-2 rounded-lg bg-ink-800/70 px-3 py-2 text-[13px] font-medium text-slate-300 transition hover:bg-ink-700 hover:text-white">
+            <RefreshIcon className="h-4 w-4" /> New Run
+          </button>
+        )}
         <button onClick={onOpenJobs} title="View jobs"
           className="flex items-center gap-2 rounded-lg bg-ink-800/70 px-3 py-2 text-[13px] font-medium text-slate-300 transition hover:bg-ink-700 hover:text-white">
           <JobsIcon className="h-4 w-4" />
@@ -596,10 +799,13 @@ function TopBar({ onRun, running, bestAffinity, isScreen, receptorName, ligandCo
           )}
         </button>
         <button data-testid="btn-run" onClick={onRun} disabled={running}
-          className="flex items-center gap-2 rounded-xl bg-gradient-to-r from-accent to-accent-dim px-4 py-2 text-[13px] font-semibold text-ink-950 shadow-lg transition hover:brightness-110 disabled:opacity-60">
+          className={`flex items-center gap-2 rounded-xl bg-gradient-to-r from-accent to-accent-dim px-4 py-2 font-semibold text-ink-950 shadow-lg transition hover:brightness-110 disabled:opacity-60 ${covalent ? 'text-[11px]' : 'text-[13px]'}`}>
           {running
-            ? <><Spinner /> {isScreen ? 'Screening…' : 'Docking…'}</>
-            : <><PlayIcon className="h-4 w-4" /> {isScreen ? 'Run Screening' : 'Run Docking'}</>}
+            ? <><Spinner /> {covalent ? (isScreen ? 'Covalent screening…' : 'Covalent docking…') : (isScreen ? 'Screening…' : 'Docking…')}</>
+            : <><PlayIcon className="h-4 w-4" />
+                {covalent ? (isScreen ? 'Run Covalent Screening' : 'Run Covalent Docking') : (isScreen ? 'Run Screening' : 'Run Docking')}
+                {covalent && <span className="ml-0.5 font-medium text-ink-950/70">· Vina</span>}
+              </>}
         </button>
       </div>
     </header>
@@ -693,7 +899,7 @@ function StepPanel({ active, steps, exhaustiveness, setExhaustiveness, scoring, 
   engine, busy, receptor, box, setBox, ligandSmiles, setLigandSmiles, ligandFile, setLigandFile, onClearLigand, ligPreview,
   protonate, setProtonate, keepWaters, onToggleWaters, keepIons, onToggleIons,
   removedComp, onToggleComponent, receptorPh, onChangePh, onCommitPh,
-  onFetchReceptor, onUploadReceptor, onClearReceptor }) {
+  onFetchReceptor, onUploadReceptor, onClearReceptor, cov }) {
   const meta = (steps || STEPS_SINGLE).find((s) => s.id === active) || STEPS_SINGLE[0]
   const [pdbId, setPdbId] = useState('1HSG')
   const fileRef = useState(null)[0]
@@ -823,15 +1029,10 @@ function StepPanel({ active, steps, exhaustiveness, setExhaustiveness, scoring, 
       {active === 'site' && (
         <div className="mt-4 space-y-3">
           {!receptor && <p className="rounded-lg bg-amber/10 px-3 py-2 text-[11px] text-amber">Load a receptor first to set the box.</p>}
-          <p className="text-[12px] leading-relaxed text-slate-400">Search box (Å). Auto-centred on the detected site; adjust as needed.</p>
-          {box && ['x', 'y', 'z'].map((ax) => (
-            <NumRow key={'c' + ax} label={`Center ${ax.toUpperCase()}`} value={box.center[ax]} step={0.5}
-              onChange={(v) => setCenter(ax, v)} />
-          ))}
-          {box && ['x', 'y', 'z'].map((ax) => (
-            <NumRow key={'s' + ax} label={`Size ${ax.toUpperCase()}`} value={box.size[ax]} step={1} min={6} max={40}
-              onChange={(v) => setSize(ax, v)} />
-          ))}
+          <p className="text-[11px] leading-relaxed text-slate-400">Search box (Å) · auto-centred on the detected site.</p>
+          {box && <AxisTriple label="Center" values={box.center} step={0.5} onChange={setCenter} />}
+          {box && <AxisTriple label="Size" values={box.size} step={1} min={6} max={40} onChange={setSize} />}
+          {receptor && cov?.enabled && <CovalentCard {...cov} />}
         </div>
       )}
 
@@ -857,8 +1058,12 @@ function StepPanel({ active, steps, exhaustiveness, setExhaustiveness, scoring, 
             <div className="mt-1 flex justify-between text-[10px] text-slate-600"><span>Fast</span><span>Thorough</span></div>
           </div>
           <button onClick={onRun} disabled={running || !receptor}
-            className="w-full rounded-xl bg-gradient-to-r from-accent to-accent-dim py-2.5 text-[13px] font-semibold text-ink-950 hover:brightness-110 disabled:opacity-50">
-            {running ? (isScreen ? 'Screening…' : 'Docking…') : (isScreen ? 'Screen library' : 'Run AutoDock Vina')}
+            className={`w-full rounded-xl bg-gradient-to-r from-accent to-accent-dim py-2.5 font-semibold text-ink-950 hover:brightness-110 disabled:opacity-50 ${cov?.enabled ? 'text-[12px]' : 'text-[13px]'}`}>
+            {running
+              ? (isScreen ? 'Screening…' : 'Docking…')
+              : cov?.enabled
+                ? (isScreen ? 'Run Covalent Screening · Vina' : 'Run Covalent Docking · Vina')
+                : (isScreen ? 'Screen library' : 'Run AutoDock Vina')}
           </button>
           {!receptor && <p className="text-center text-[11px] text-slate-500">Load a receptor to enable docking.</p>}
         </div>
@@ -899,6 +1104,151 @@ function LigandPreview({ preview }) {
         </>
       )}
     </div>
+  )
+}
+
+// Covalent docking controls — lives in the Binding Site step. Pick a reactive
+// residue (nucleophiles in the box), auto-detect the ligand's warhead (with an
+// override), and set the acceptance distance. Works for docking and screening.
+function CovalentCard({ enabled, onToggle, residues, residue, setResidue, loading, warheads,
+  override, setOverride, maxDist, setMaxDist, mode, setMode, detected, isScreen }) {
+  const sel = (residues || []).find((r) => r.key === residue)
+  const tethered = mode === 'tethered'
+  return (
+    <div className="rounded-xl border border-accent/40 bg-accent/[0.05] p-3">
+      <div className="flex items-center gap-2">
+        <LinkIcon className="h-4 w-4 text-accent" />
+        <span className="text-[12.5px] font-semibold text-white">Covalent target</span>
+        <span className="ml-auto rounded-full bg-accent/15 px-2 py-0.5 text-[9px] font-semibold uppercase tracking-wide text-accent">Active</span>
+      </div>
+
+      {/* method */}
+      <div className="mt-3">
+        <div className="mb-1 text-[10.5px] font-medium text-slate-400">Method</div>
+        <div className="grid grid-cols-2 gap-1 rounded-lg bg-ink-800/80 p-0.5">
+          {[['geometry', 'Geometry-guided'], ['tethered', 'Bond-restrained']].map(([id, label]) => (
+            <button key={id} onClick={() => setMode(id)}
+              className={`rounded-md py-1.5 text-[11px] font-medium transition ${mode === id ? 'bg-accent text-ink-950' : 'text-slate-400 hover:text-slate-200'}`}>
+              {label}
+            </button>
+          ))}
+        </div>
+        <p className="mt-1 text-[10px] leading-relaxed text-slate-500">
+          {tethered
+            ? 'Bond-restrained: the top pose is refined so the warhead forms the covalent bond at its ideal length.'
+            : 'Fast: poses are ranked by how close the warhead comes to the residue (no bond enforced).'}
+        </p>
+      </div>
+
+      <div className="mt-3 space-y-3">
+          {/* reactive residue */}
+          <div>
+            <div className="mb-1 flex items-center gap-1.5 text-[10.5px] font-medium text-slate-400">
+              Reactive residue
+              {loading && <span className="h-2.5 w-2.5 animate-spin rounded-full border-2 border-accent/30 border-t-accent" />}
+            </div>
+            {(residues || []).length === 0 ? (
+              <p className="rounded-md bg-amber/10 px-2 py-1.5 text-[10.5px] leading-relaxed text-amber">
+                {loading ? 'Scanning the box…' : 'No Cys/Ser/Thr/Lys/Tyr/His inside the box. Widen or recentre the grid.'}
+              </p>
+            ) : (
+              <div className="relative">
+                <select value={residue || ''} onChange={(e) => setResidue(e.target.value)}
+                  className="w-full appearance-none rounded-lg bg-ink-900 px-3 py-2 font-mono text-[12px] text-slate-200 outline-none ring-1 ring-ink-700 focus:ring-accent/60">
+                  {residues.map((r) => (
+                    <option key={r.key} value={r.key}>
+                      {r.residue} · {r.atom_label}{r.dist_to_center != null ? `  (${r.dist_to_center} Å)` : ''}
+                    </option>
+                  ))}
+                </select>
+                <ChevronDownIcon className="pointer-events-none absolute right-2.5 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-500" />
+              </div>
+            )}
+            {sel && <div className="mt-1 text-[10px] text-slate-500">Nucleophile {sel.atom} ({sel.atom_label}) · chain {sel.chain}</div>}
+          </div>
+
+          {/* warhead */}
+          <div>
+            <div className="mb-1 flex items-center justify-between text-[10.5px] font-medium text-slate-400">
+              <span>Warhead</span>
+              {override === 'auto' && !isScreen && (detected
+                ? <span className="rounded bg-emerald-500/15 px-1.5 py-0.5 text-[9.5px] text-emerald-400">auto-detected</span>
+                : <span className="rounded bg-amber/15 px-1.5 py-0.5 text-[9.5px] text-amber">none found</span>)}
+            </div>
+            {override === 'auto' && (
+              <div className="mb-1.5 rounded-lg bg-ink-900/70 px-3 py-2 text-[11.5px] ring-1 ring-ink-700">
+                {isScreen ? <span className="text-slate-300">Auto-detected per compound</span>
+                  : detected ? <span className="font-medium text-amber-300">{detected.label}</span>
+                  : <span className="text-slate-500">No electrophilic warhead in this ligand</span>}
+              </div>
+            )}
+            <div className="relative">
+              <select value={override} onChange={(e) => setOverride(e.target.value)}
+                className="w-full appearance-none rounded-lg bg-ink-900 px-3 py-2 text-[12px] text-slate-200 outline-none ring-1 ring-ink-700 focus:ring-accent/60">
+                <option value="auto">Auto-detect warhead</option>
+                {(warheads || []).map((w) => <option key={w.name} value={w.name}>{w.label}</option>)}
+              </select>
+              <ChevronDownIcon className="pointer-events-none absolute right-2.5 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-500" />
+            </div>
+          </div>
+
+          {/* max bond distance — geometry mode only */}
+          {!tethered && (
+            <div>
+              <div className="mb-1 flex items-center justify-between text-[10.5px] font-medium text-slate-400">
+                <span>Max bond distance</span>
+                <span className="font-mono text-accent">{Number(maxDist).toFixed(1)} Å</span>
+              </div>
+              <input type="range" min="2.5" max="5" step="0.1" value={maxDist}
+                onChange={(e) => setMaxDist(+e.target.value)} className="w-full accent-accent" />
+            </div>
+          )}
+
+          <p className="border-t border-ink-700/60 pt-2 text-[10px] leading-relaxed text-slate-500">
+            {tethered
+              ? <>The warhead is tethered to {sel ? `${sel.residue} ${sel.atom_label}` : 'the residue'} at its ideal bond length and the ligand is force-field refined.</>
+              : <>Poses are ranked by affinity <span className="text-slate-400">and</span> how closely the warhead reaches {sel ? `${sel.residue} ${sel.atom_label}` : 'the residue'}.</>}
+          </p>
+      </div>
+    </div>
+  )
+}
+
+// compact X/Y/Z numeric group — replaces three full-width slider rows to save space
+function AxisTriple({ label, values, step = 1, min = -999, max = 999, onChange }) {
+  const clamp = (v) => Math.min(max, Math.max(min, +v.toFixed(3)))
+  return (
+    <div>
+      <div className="mb-1 text-[10.5px] font-semibold uppercase tracking-wide text-slate-500">{label} (Å)</div>
+      <div className="grid grid-cols-3 gap-2">
+        {['x', 'y', 'z'].map((ax) => (
+          <div key={ax} className="flex items-center gap-1 rounded-lg bg-ink-900 pl-2 pr-1 py-1 ring-1 ring-ink-700 focus-within:ring-accent/60">
+            <span className="text-[10px] font-semibold text-accent/80">{ax.toUpperCase()}</span>
+            <input type="number" step={step} min={min} max={max} value={values[ax]}
+              onChange={(e) => onChange(ax, +e.target.value)}
+              className="no-spinner w-full min-w-0 bg-transparent text-right font-mono text-[12px] text-slate-200 outline-none" />
+            <div className="flex shrink-0 flex-col">
+              <button tabIndex={-1} onClick={() => onChange(ax, clamp(values[ax] + step))}
+                className="grid h-[13px] w-4 place-items-center rounded-sm text-slate-500 hover:bg-ink-700 hover:text-accent">
+                <CaretIcon className="h-2.5 w-2.5" dir="up" />
+              </button>
+              <button tabIndex={-1} onClick={() => onChange(ax, clamp(values[ax] - step))}
+                className="grid h-[13px] w-4 place-items-center rounded-sm text-slate-500 hover:bg-ink-700 hover:text-accent">
+                <CaretIcon className="h-2.5 w-2.5" dir="down" />
+              </button>
+            </div>
+          </div>
+        ))}
+      </div>
+    </div>
+  )
+}
+
+function CaretIcon({ dir = 'down', ...p }) {
+  return (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round" {...p}>
+      {dir === 'up' ? <path d="M6 15l6-6 6 6" /> : <path d="M6 9l6 6 6-6" />}
+    </svg>
   )
 }
 
@@ -1034,9 +1384,8 @@ function AiPanel({ active, mode, receptor, box, ligProps, ligandSmiles, dockRes,
 /*  Results dashboard                                                 */
 /* ------------------------------------------------------------------ */
 function ResultsView({ result, receptorName }) {
-  const [map2D, setMap2D] = useState(false)
+  const [viewMode, setViewMode] = useState('off') // 'off' (structure only) | '3d' | '2d' — interaction view
   const [exportOpen, setExportOpen] = useState(false)
-  const [inter3D, setInter3D] = useState(true)
   const [minMode, setMinMode] = useState('pocket')
   const [minBusy, setMinBusy] = useState(false)
   const [minRes, setMinRes] = useState(null) // {pdb, energy_before, energy_after}
@@ -1089,45 +1438,72 @@ function ResultsView({ result, receptorName }) {
         <Kpi label="Drug-likeness (QED)" value={props.qed ?? '—'} unit={result?.lipinski_pass ? 'Lipinski ✓' : 'Lipinski ✗'} />
       </div>
 
-      <div className="grid grid-cols-3 gap-4">
-        <div className="col-span-2 flex flex-col gap-4">
+      {result?.covalent && <CovalentBanner cov={result.covalent} />}
+
+      <div className="grid grid-cols-4 gap-4">
+        <div className="col-span-3 flex flex-col gap-4">
           <div className="glass rounded-2xl p-3">
-            <div className="mb-2 flex items-center justify-between px-1">
-              <h3 className="text-[13px] font-semibold text-white">
-                Docked Complex · Pose {selNum}{selPose === 0 ? ' (top)' : ''}
+            <div className="mb-2 flex items-center justify-between gap-2 px-1">
+              <h3 className="min-w-0 truncate text-[13px] font-semibold text-white">
+                {viewMode === '2d' ? `Interaction map · Pose ${selNum}` : `Docked Complex · Pose ${selNum}${selPose === 0 ? ' (top)' : ''}`}
               </h3>
-              <div className="flex items-center gap-2">
-                <Toggle active={inter3D} onClick={() => setInter3D((v) => !v)} label="3D interactions" />
+              <div className="flex shrink-0 items-center gap-2">
+                {sel.covalent && <CovalentChip cov={sel.covalent} />}
+                <span className="text-[10px] font-medium uppercase tracking-wide text-slate-500">Interactions</span>
+                <div className="flex rounded-lg bg-ink-800/80 p-0.5">
+                  {[['off', 'Off'], ['3d', '3D'], ['2d', '2D']].map(([m, l]) => (
+                    <button key={m} onClick={() => setViewMode(m)}
+                      className={`rounded-md px-2.5 py-1 text-[11px] font-medium transition ${viewMode === m ? 'bg-ink-600 text-white' : 'text-slate-400 hover:text-slate-200'}`}>
+                      {l}
+                    </button>
+                  ))}
+                </div>
                 <span className="font-mono text-[12px] text-accent">{fmt(selAff)} kcal/mol</span>
               </div>
             </div>
-            <div className="h-[300px]">
-              <MoleculeViewer style="cartoon" showLigand spin={false} showInteractions={inter3D}
-                pdb={minRes?.pdb || selComplex} ligResn="LIG" />
-            </div>
-            {/* quick geometry cleanup / minimization */}
-            <div className="mt-2 flex flex-wrap items-center gap-2 border-t border-ink-700/60 px-1 pt-2">
-              <span className="text-[11px] font-medium text-slate-400">Cleanup</span>
-              <select value={minMode} onChange={(e) => setMinMode(e.target.value)}
-                className="rounded-md bg-ink-900 px-2 py-1 text-[11px] text-slate-200 outline-none ring-1 ring-ink-700 focus:ring-accent/60">
-                <option value="ligand">Ligand only</option>
-                <option value="pocket">Ligand + pocket</option>
-                <option value="complex">Whole complex</option>
-              </select>
-              <button onClick={runMinimize} disabled={minBusy}
-                className="flex items-center gap-1.5 rounded-lg bg-violet/15 px-2.5 py-1 text-[11px] font-semibold text-violet ring-1 ring-violet/30 hover:bg-violet/25 disabled:opacity-50">
-                {minBusy ? 'Minimizing…' : 'Energy-minimize'}
-              </button>
-              {minRes?.pdb && (
-                <>
-                  <span className="font-mono text-[11px] text-emerald-400">ΔE {fmt(minRes.energy_after - minRes.energy_before)} ({minRes.energy_before}→{minRes.energy_after})</span>
-                  <button onClick={downloadMin} className="rounded-md bg-ink-800 px-2 py-1 text-[11px] text-slate-300 hover:bg-ink-700 hover:text-white">Download PDB</button>
-                  <button onClick={() => setMinRes(null)} className="text-[11px] text-slate-500 hover:text-slate-300">reset</button>
-                </>
-              )}
-              {minRes?.error && <span className="text-[11px] text-red-400">{minRes.error}</span>}
-              <span className="ml-auto text-[10px] text-slate-600">UFF · geometric cleanup, not rigorous MM</span>
-            </div>
+            {viewMode === '2d' ? (
+              <div className="overflow-hidden rounded-xl">
+                <InteractionMap2D ligand={ligName} pose={selNum} affinity={selAff} interactions={selInter} ligand2d={result?.ligand_2d}
+                  covalentBond={sel.covalent?.mode === 'tethered' && sel.covalent.warhead_atom != null
+                    ? { ligAtom: sel.covalent.warhead_atom, residue: sel.covalent.residue, distance: sel.covalent.distance } : null} />
+              </div>
+            ) : (
+              <>
+                <div className="h-[360px]">
+                  <MoleculeViewer style="cartoon" showLigand spin={false} showInteractions={viewMode === '3d'}
+                    pdb={minRes?.pdb || selComplex} ligResn="LIG"
+                    covalentTarget={sel.covalent && sel.covalent.nuc_xyz ? {
+                      chain: sel.covalent.chain, resi: sel.covalent.nuc_resi, residueLabel: sel.covalent.residue,
+                      atomLabel: sel.covalent.atom_label, nuc: sel.covalent.nuc_xyz,
+                      warhead: sel.covalent.warhead_xyz, distance: sel.covalent.distance,
+                      bonded: sel.covalent.mode === 'tethered',
+                    } : null} />
+                </div>
+                {/* quick geometry cleanup / minimization */}
+                <div className="mt-2 flex flex-wrap items-center gap-2 border-t border-ink-700/60 px-1 pt-2">
+                  <span className="text-[11px] font-medium text-slate-400">Cleanup</span>
+                  <select value={minMode} onChange={(e) => setMinMode(e.target.value)}
+                    className="rounded-md bg-ink-900 px-2 py-1 text-[11px] text-slate-200 outline-none ring-1 ring-ink-700 focus:ring-accent/60">
+                    <option value="ligand">Ligand only</option>
+                    <option value="pocket">Ligand + pocket</option>
+                    <option value="complex">Whole complex</option>
+                  </select>
+                  <button onClick={runMinimize} disabled={minBusy}
+                    className="flex items-center gap-1.5 rounded-lg bg-violet/15 px-2.5 py-1 text-[11px] font-semibold text-violet ring-1 ring-violet/30 hover:bg-violet/25 disabled:opacity-50">
+                    {minBusy ? 'Minimizing…' : 'Energy-minimize'}
+                  </button>
+                  {minRes?.pdb && (
+                    <>
+                      <span className="font-mono text-[11px] text-emerald-400">ΔE {fmt(minRes.energy_after - minRes.energy_before)} ({minRes.energy_before}→{minRes.energy_after})</span>
+                      <button onClick={downloadMin} className="rounded-md bg-ink-800 px-2 py-1 text-[11px] text-slate-300 hover:bg-ink-700 hover:text-white">Download PDB</button>
+                      <button onClick={() => setMinRes(null)} className="text-[11px] text-slate-500 hover:text-slate-300">reset</button>
+                    </>
+                  )}
+                  {minRes?.error && <span className="text-[11px] text-red-400">{minRes.error}</span>}
+                  <span className="ml-auto text-[10px] text-slate-600">UFF · geometric cleanup, not rigorous MM</span>
+                </div>
+              </>
+            )}
           </div>
 
           <div className="glass rounded-2xl p-4">
@@ -1153,52 +1529,46 @@ function ResultsView({ result, receptorName }) {
         </div>
 
         <div className="flex flex-col gap-4">
-          <div className="glass rounded-2xl p-4">
-            <div className="mb-3 flex items-center justify-between">
-              <h3 className="text-[13px] font-semibold text-white">Key interactions <span className="text-[11px] font-normal text-slate-500">· pose {selNum}</span></h3>
-              <button onClick={() => setMap2D(true)}
-                className="flex items-center gap-1.5 rounded-lg bg-accent/10 px-2.5 py-1.5 text-[11px] font-semibold text-accent ring-1 ring-accent/30 hover:bg-accent/20">
-                <MapIcon className="h-3.5 w-3.5" /> 2D diagram
+          <div className="glass rounded-2xl p-3">
+            <div className="mb-2 flex items-center justify-between gap-2">
+              <h3 className="min-w-0 truncate text-[12.5px] font-semibold text-white">Key interactions <span className="text-[10.5px] font-normal text-slate-500">· pose {selNum}</span></h3>
+              <button onClick={() => setViewMode('2d')} title="Show 2D interaction map"
+                className="flex shrink-0 items-center gap-1 rounded-lg bg-accent/10 px-2 py-1 text-[11px] font-semibold text-accent ring-1 ring-accent/30 hover:bg-accent/20">
+                <MapIcon className="h-3.5 w-3.5" /> 2D
               </button>
             </div>
-            <div className="max-h-[190px] space-y-2 overflow-auto">
+            <div className="max-h-[220px] space-y-1.5 overflow-auto">
               {selInter.length === 0 && <p className="text-[11px] text-slate-500">No close contacts detected in this pose.</p>}
               {selInter.map((it, i) => (
-                <div key={i} className="flex items-center gap-2.5">
-                  <span className="h-2.5 w-2.5 shrink-0 rounded-full" style={{ background: INT_COLORS[it.type] || '#64748b' }} />
-                  <span className="font-mono text-[12px] text-slate-200">{it.residue}</span>
-                  <span className="text-[11px] text-slate-500">{it.type}</span>
-                  <span className="ml-auto font-mono text-[11px] text-slate-400">{it.distance} Å</span>
+                <div key={i} className="flex items-center gap-2">
+                  <span className="h-2 w-2 shrink-0 rounded-full" style={{ background: INT_COLORS[it.type] || '#64748b' }} />
+                  <span className="shrink-0 font-mono text-[11.5px] text-slate-200">{it.residue}</span>
+                  <span className="min-w-0 flex-1 truncate text-[10.5px] text-slate-500">{it.type}</span>
+                  <span className="shrink-0 font-mono text-[11px] text-slate-400">{it.distance} Å</span>
                 </div>
               ))}
             </div>
-            <div className="mt-3 flex flex-wrap gap-2 border-t border-ink-700/60 pt-3 text-[10px]">
+            <div className="mt-2 flex flex-wrap gap-x-2 gap-y-1 border-t border-ink-700/60 pt-2 text-[10px]">
               {Object.entries(INT_COLORS).map(([k, v]) => (
-                <span key={k} className="flex items-center gap-1.5 text-slate-400">
+                <span key={k} className="flex items-center gap-1 text-slate-400">
                   <span className="h-2 w-2 rounded-full" style={{ background: v }} />{k}
                 </span>
               ))}
             </div>
           </div>
 
-          <div className="glass rounded-2xl p-4">
-            <h3 className="mb-1 text-[13px] font-semibold text-white">Ligand properties</h3>
-            <div className="mt-2 grid grid-cols-2 gap-2 text-[12px]">
+          <div className="glass rounded-2xl p-3">
+            <h3 className="mb-2 text-[12.5px] font-semibold text-white">Ligand properties</h3>
+            <div className="grid grid-cols-2 gap-1.5 text-[11.5px]">
               {[['MW', props.mw], ['logP', props.logp], ['H-donors', props.hbd], ['H-acceptors', props.hba], ['TPSA', props.tpsa], ['Rot. bonds', props.rotatable]].map(([k, v]) => (
-                <div key={k} className="flex items-center justify-between rounded-lg bg-ink-800/50 px-2.5 py-1.5">
-                  <span className="text-slate-500">{k}</span><span className="font-mono text-slate-200">{v ?? '—'}</span>
+                <div key={k} className="flex items-center justify-between rounded-lg bg-ink-800/50 px-2 py-1">
+                  <span className="truncate text-slate-500">{k}</span><span className="ml-1 font-mono text-slate-200">{v ?? '—'}</span>
                 </div>
               ))}
             </div>
           </div>
         </div>
       </div>
-
-      {map2D && (
-        <Modal onClose={() => setMap2D(false)}>
-          <InteractionMap2D ligand={ligName} pose={selNum} affinity={selAff} interactions={selInter} ligand2d={result?.ligand_2d} />
-        </Modal>
-      )}
 
       {exportOpen && (
         <ExportModal onClose={() => setExportOpen(false)} payload={{
@@ -1213,6 +1583,40 @@ function ResultsView({ result, receptorName }) {
 }
 
 function fmt(v) { return v == null ? '—' : (v < 0 ? '−' + Math.abs(v).toFixed(1) : v.toFixed(1)) }
+
+// Covalent summary banner for the docking results header
+function CovalentBanner({ cov }) {
+  const ok = cov.compatible
+  const tethered = cov.mode === 'tethered'
+  return (
+    <div className={`flex flex-wrap items-center gap-x-3 gap-y-1 rounded-xl border px-4 py-2.5 text-[12px] ${ok ? 'border-accent/30 bg-accent/[0.06]' : 'border-amber/30 bg-amber/[0.06]'}`}>
+      <span className="flex items-center gap-1.5 font-semibold text-white"><LinkIcon className="h-3.5 w-3.5 text-accent" /> Covalent docking</span>
+      <span className="rounded-full bg-ink-800/80 px-2 py-0.5 text-[10px] font-medium text-slate-300">{tethered ? 'Bond-restrained' : 'Geometry-guided'}</span>
+      <span className="text-slate-400">Target <span className="font-mono text-slate-200">{cov.residue} {cov.atom_label}</span></span>
+      {cov.warhead && <span className="text-slate-400">Warhead <span className="text-amber-300">{cov.warhead}</span></span>}
+      {tethered && cov.moved != null && <span className="text-slate-400">Warhead pulled <span className="font-mono text-slate-200">{cov.moved} Å</span></span>}
+      {cov.best_distance != null && (
+        <span className={`ml-auto flex items-center gap-1.5 rounded-lg px-2.5 py-1 font-mono text-[12px] font-semibold ${ok ? 'bg-accent/15 text-accent' : 'bg-amber/15 text-amber'}`}>
+          {ok ? '✓' : '⚠'} {tethered ? 'bond' : 'warhead reach'} {cov.best_distance} Å
+          <span className="font-sans text-[10px] font-normal text-slate-400">{tethered ? (cov.target ? `/ ${cov.target} Å ideal` : '') : `/ ${cov.max_dist} Å cutoff`}</span>
+        </span>
+      )}
+      {cov.best_distance == null && <span className="ml-auto text-[11px] text-amber">no warhead detected in ligand</span>}
+    </div>
+  )
+}
+
+// Compact per-pose covalent distance chip
+function CovalentChip({ cov }) {
+  if (cov.distance == null) return <span className="rounded-md bg-amber/15 px-2 py-1 text-[10px] font-medium text-amber">no reach</span>
+  const ok = cov.compatible
+  return (
+    <span className={`flex items-center gap-1 rounded-md px-2 py-1 text-[10px] font-medium ${ok ? 'bg-accent/15 text-accent' : 'bg-amber/15 text-amber'}`}
+      title={`Warhead → ${cov.residue} ${cov.atom_label}`}>
+      <LinkIcon className="h-3 w-3" /> {cov.distance} Å
+    </span>
+  )
+}
 
 function Modal({ children, onClose }) {
   return (
@@ -1233,10 +1637,10 @@ function Modal({ children, onClose }) {
 /* ------------------------------------------------------------------ */
 /*  Cite DDS                                                          */
 /* ------------------------------------------------------------------ */
-const CITATION = 'Mahmoud E. Soliman, Drug Design Studio (DDS): an all-in-one graphical platform for molecular docking, virtual screening and protein-ligand interaction analysis under review'
+const CITATION = 'Mahmoud E Soliman, Drug Design Studio (DDS): An all-in-one Cross-Platform for Covalent/Non-Covalent Docking, Covalent Binders Virtual Screening and Protein-Ligand interaction analysis - Under Review'
 const CITATION_BIBTEX = `@article{soliman2026dds,
   author  = {Soliman, Mahmoud E.},
-  title   = {Drug Design Studio (DDS): An All-in-One Graphical Platform for Molecular Docking, Virtual Screening and Protein-Ligand Interaction Analysis},
+  title   = {Drug Design Studio (DDS): An All-in-One Cross-Platform for Covalent/Non-Covalent Docking, Covalent Binders Virtual Screening and Protein-Ligand Interaction Analysis},
   note    = {Under review}
 }`
 
@@ -1418,3 +1822,8 @@ function QuoteIcon(p) { return I(p, <><path d="M7 7H4a1 1 0 00-1 1v4a1 1 0 001 1
 function CopyIcon(p) { return I(p, <><rect x="9" y="9" width="12" height="12" rx="2" /><path d="M5 15V5a2 2 0 012-2h8" /></>) }
 function TrashIcon(p) { return I(p, <><path d="M4 7h16M10 11v6M14 11v6M5 7l1 13a2 2 0 002 2h8a2 2 0 002-2l1-13M9 7V4a1 1 0 011-1h4a1 1 0 011 1v3" /></>) }
 function JobsIcon(p) { return I(p, <><rect x="3" y="4" width="18" height="16" rx="2" /><path d="M3 9h18M7 13h6M7 16h9" /></>) }
+function LinkIcon(p) { return I(p, <><path d="M9 15l6-6M10.5 6.5l1-1a4 4 0 015.66 5.66l-1.5 1.5M13.5 17.5l-1 1a4 4 0 01-5.66-5.66l1.5-1.5" /></>) }
+function ChevronDownIcon(p) { return I(p, <><path d="M6 9l6 6 6-6" /></>) }
+function ChevronRightIcon(p) { return I(p, <><path d="M9 6l6 6-6 6" /></>) }
+function RefreshIcon(p) { return I(p, <><path d="M3 12a9 9 0 0115.5-6.4L21 8M21 3v5h-5M21 12a9 9 0 01-15.5 6.4L3 16M3 21v-5h5" /></>) }
+function DocsIcon(p) { return I(p, <><path d="M4 5a2 2 0 012-2h12v16H6a2 2 0 00-2 2zM8 3v16M11 7h4M11 10h4" /></>) }

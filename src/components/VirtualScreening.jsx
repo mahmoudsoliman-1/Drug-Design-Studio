@@ -169,12 +169,14 @@ export function ScreeningResults({ result, receptor, box, scoring }) {
     setBusy3D(l.id)
     try {
       const r = await api.getComplex(l.complex_id)
-      setView3D({ id: l.id, affinity: l.affinity, pdb: r.complex_pdb })
+      setView3D({ id: l.id, affinity: l.affinity, pdb: r.complex_pdb, cov: l.covalent })
     } catch (e) { /* ignore */ } finally { setBusy3D(null) }
   }
 
+  const cov = result?.covalent
   const all = (result?.results || []).filter((r) => r.affinity != null)
-  const ranked = useMemo(() => [...all].sort((a, b) => a.affinity - b.affinity), [result])
+  // covalent runs keep the engine's ranking (compatible hits first); otherwise sort by affinity
+  const ranked = useMemo(() => (cov ? all : [...all].sort((a, b) => a.affinity - b.affinity)), [result])
   const strongCut = -8.5
   const target = receptor?.name || 'Receptor'
 
@@ -192,6 +194,8 @@ export function ScreeningResults({ result, receptor, box, scoring }) {
 
   const top5 = ranked.slice(0, 5)
   const hitRate = ranked.length ? Math.round((ranked.filter((l) => l.affinity <= strongCut).length / ranked.length) * 100) : 0
+  const affMax = Math.max(...ranked.map((r) => r.affinity)) // weakest binder (least negative)
+  const affMin = Math.min(...ranked.map((r) => r.affinity)) // strongest binder
 
   if (!ranked.length) {
     return <div className="grid flex-1 place-items-center text-slate-500">No successful screening results.</div>
@@ -215,9 +219,20 @@ export function ScreeningResults({ result, receptor, box, scoring }) {
       <div className="grid grid-cols-4 gap-4">
         <Kpi label="Compounds screened" value={ranked.length} unit="ligands" />
         <Kpi label="Top hit" value={ranked[0].affinity} unit="kcal/mol" tone="accent" />
-        <Kpi label="Hit rate" value={`${hitRate}%`} unit={`≤ ${strongCut}`} />
+        {cov
+          ? <Kpi label="Covalent hits" value={cov.n_compatible ?? 0} unit={`≤ ${cov.max_dist} Å reach`} tone="accent" />
+          : <Kpi label="Hit rate" value={`${hitRate}%`} unit={`≤ ${strongCut}`} />}
         <Kpi label="Drug-like" value={ranked.filter((l) => l.lipinski_pass).length} unit="pass Lipinski" />
       </div>
+
+      {cov && (
+        <div className="flex flex-wrap items-center gap-x-3 gap-y-1 rounded-xl border border-accent/30 bg-accent/[0.06] px-4 py-2.5 text-[12px]">
+          <span className="flex items-center gap-1.5 font-semibold text-white"><LinkIcon className="h-3.5 w-3.5 text-accent" /> Covalent screening</span>
+          <span className="text-slate-400">Target <span className="font-mono text-slate-200">{cov.residue} {cov.atom_label}</span></span>
+          <span className="text-slate-400">Bond cutoff <span className="font-mono text-slate-200">{cov.max_dist} Å</span></span>
+          <span className="ml-auto rounded-lg bg-accent/15 px-2.5 py-1 font-mono text-[12px] font-semibold text-accent">{cov.n_compatible ?? 0} of {ranked.length} reach the residue</span>
+        </div>
+      )}
 
       {/* Top-5 hits with real 2D structures */}
       <div className="grid grid-cols-5 gap-3">
@@ -280,6 +295,7 @@ export function ScreeningResults({ result, receptor, box, scoring }) {
               <th className="pb-2 font-medium">Rank</th>
               <th className="pb-2 font-medium">Compound</th>
               <th className="pb-2 font-medium">Affinity</th>
+              {cov && <th className="pb-2 font-medium">Covalent</th>}
               <th className="pb-2 font-medium">Score</th>
               <th className="pb-2 font-medium">MW</th>
               <th className="pb-2 font-medium">logP</th>
@@ -291,7 +307,7 @@ export function ScreeningResults({ result, receptor, box, scoring }) {
           <tbody>
             {rows.map((l) => {
               const rank = ranked.indexOf(l) + 1
-              const scorePct = Math.round(((l.affinity - ranked[ranked.length - 1].affinity) / (ranked[0].affinity - ranked[ranked.length - 1].affinity)) * 100)
+              const scorePct = affMin === affMax ? 100 : Math.round(((l.affinity - affMax) / (affMin - affMax)) * 100)
               return (
                 <tr key={l.id} className="border-b border-ink-800/60 text-[12px] hover:bg-ink-800/40">
                   <td className="py-2.5">
@@ -303,6 +319,15 @@ export function ScreeningResults({ result, receptor, box, scoring }) {
                     <div className="max-w-[200px] truncate font-mono text-[10px] text-slate-600" title={l.smiles}>{l.smiles}</div>
                   </td>
                   <td className="py-2.5 font-mono font-semibold text-accent">{l.affinity}</td>
+                  {cov && (
+                    <td className="py-2.5">
+                      {l.covalent_distance == null
+                        ? <span className="text-[11px] text-slate-600">—</span>
+                        : <span className={`inline-flex items-center gap-1 rounded-md px-2 py-0.5 font-mono text-[11px] font-medium ${l.covalent_compatible ? 'bg-accent/15 text-accent' : 'bg-amber-500/15 text-amber-400'}`}>
+                            {l.covalent_compatible ? '✓' : '⚠'} {l.covalent_distance} Å
+                          </span>}
+                    </td>
+                  )}
                   <td className="py-2.5">
                     <span className="inline-flex items-center gap-1.5">
                       <span className="h-1.5 w-16 overflow-hidden rounded-full bg-ink-700">
@@ -343,7 +368,9 @@ export function ScreeningResults({ result, receptor, box, scoring }) {
       {map2D && (
         <Modal onClose={() => setMap2D(null)}>
           <InteractionMap2D ligand={map2D.id} pose={1} affinity={map2D.affinity}
-            interactions={map2D.interactions || []} ligand2d={map2D.ligand_2d} />
+            interactions={map2D.interactions || []} ligand2d={map2D.ligand_2d}
+            covalentBond={map2D.covalent?.mode === 'tethered' && map2D.covalent.warhead_atom != null
+              ? { ligAtom: map2D.covalent.warhead_atom, residue: map2D.covalent.residue, distance: map2D.covalent.distance } : null} />
         </Modal>
       )}
 
@@ -358,7 +385,13 @@ export function ScreeningResults({ result, receptor, box, scoring }) {
             </div>
             <div className="p-4">
               <div className="h-[520px]">
-                <MoleculeViewer pdb={view3D.pdb} ligResn="LIG" showInteractions style="cartoon" showLigand spin={false} />
+                <MoleculeViewer pdb={view3D.pdb} ligResn="LIG" showInteractions style="cartoon" showLigand spin={false}
+                  covalentTarget={view3D.cov && view3D.cov.nuc_xyz ? {
+                    chain: view3D.cov.chain, resi: view3D.cov.nuc_resi, residueLabel: view3D.cov.residue,
+                    atomLabel: view3D.cov.atom_label, nuc: view3D.cov.nuc_xyz,
+                    warhead: view3D.cov.warhead_xyz, distance: view3D.cov.distance,
+                    bonded: view3D.cov.mode === 'tethered',
+                  } : null} />
               </div>
             </div>
           </div>
@@ -397,6 +430,11 @@ function Podium({ rank, ligand, on2D, on3D, busy }) {
       <div className="mt-0.5 flex flex-wrap items-center gap-x-2 text-[10px] text-slate-500">
         <span>MW {ligand.mw}</span><span>·</span><span>logP {ligand.logp}</span><span>·</span><span>QED {ligand.qed}</span>
       </div>
+      {ligand.covalent_distance != null && (
+        <div className={`mt-1.5 flex items-center gap-1 rounded-md px-2 py-1 text-[10px] font-medium ${ligand.covalent_compatible ? 'bg-accent/15 text-accent' : 'bg-amber-500/15 text-amber-400'}`}>
+          <LinkIcon className="h-3 w-3" /> warhead reach {ligand.covalent_distance} Å {ligand.covalent_compatible ? '✓' : ''}
+        </div>
+      )}
       <div className="mt-2.5 grid grid-cols-2 gap-2">
         <button onClick={on2D} disabled={!on2D}
           className="rounded-lg bg-accent/10 py-1.5 text-[11px] font-semibold text-accent ring-1 ring-accent/30 hover:bg-accent/20 disabled:opacity-40">2D</button>
@@ -465,3 +503,4 @@ function LayersIcon(p) { return <svg viewBox="0 0 24 24" fill="none" stroke="cur
 function UploadIcon(p) { return <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" {...p}><path d="M12 16V4M8 8l4-4 4 4M4 16v2a2 2 0 002 2h12a2 2 0 002-2v-2" /></svg> }
 function ExportIcon(p) { return <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" {...p}><path d="M12 15V3M8 7l4-4 4 4M4 15v4a2 2 0 002 2h12a2 2 0 002-2v-4" /></svg> }
 function SearchIcon(p) { return <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" {...p}><circle cx="11" cy="11" r="7" /><path d="M21 21l-4-4" /></svg> }
+function LinkIcon(p) { return <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" {...p}><path d="M9 15l6-6M10.5 6.5l1-1a4 4 0 015.66 5.66l-1.5 1.5M13.5 17.5l-1 1a4 4 0 01-5.66-5.66l1.5-1.5" /></svg> }

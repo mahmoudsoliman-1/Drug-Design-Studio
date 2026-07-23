@@ -548,7 +548,7 @@ function methodsHTML(meta) {
   const screening = meta.mode === 'screen'
 
   const R = [
-    'Mahmoud E. Soliman, Drug Design Studio (DDS): an all-in-one graphical platform for molecular docking, virtual screening and protein-ligand interaction analysis under review',
+    'Mahmoud E Soliman, Drug Design Studio (DDS): An all-in-one Cross-Platform for Covalent/Non-Covalent Docking, Covalent Binders Virtual Screening and Protein-Ligand interaction analysis - Under Review',
     'Berman HM, Westbrook J, Feng Z, <i>et al.</i> The Protein Data Bank. <i>Nucleic Acids Res.</i> 2000;28:235&ndash;242.',
     "O'Boyle NM, Banck M, James CA, <i>et al.</i> Open Babel: An open chemical toolbox. <i>J Cheminform.</i> 2011;3:33.",
     'Gasteiger J, Marsili M. Iterative partial equalization of orbital electronegativity &mdash; a rapid access to atomic charges. <i>Tetrahedron.</i> 1980;36:3219&ndash;3228.',
@@ -572,16 +572,64 @@ function methodsHTML(meta) {
   const screen = screening ? para(
     `Each of the ${p.n_ligands || 'library'} compounds was prepared and docked independently under identical parameters, and compounds were ranked by their best predicted binding affinity. Drug-likeness was assessed using Lipinski's rule of five and the quantitative estimate of drug-likeness (QED).`) : ''
 
+  // covalent-specific references appended after the fixed list (base numbering unchanged)
+  const covRefs = []
+  const baseN = R.length
+  let rdkitN, uffN, covN
+  if (p.covalent) {
+    covRefs.push('Landrum G, <i>et al.</i> RDKit: Open-source cheminformatics. https://www.rdkit.org')
+    rdkitN = baseN + covRefs.length
+    if (p.covalent_mode === 'tethered') {
+      covRefs.push('Rappé AK, Casewit CJ, Colwell KS, Goddard WA III, Skiff WM. UFF, a full periodic table force field for molecular mechanics and molecular dynamics simulations. <i>J Am Chem Soc.</i> 1992;114:10024&ndash;10035.')
+      uffN = baseN + covRefs.length
+    }
+    covRefs.push('Bianco G, Forli S, Goodsell DS, Olson AJ. Covalent docking using AutoDock: two-point attractor and flexible side chain methods. <i>Protein Sci.</i> 2016;25:295&ndash;301.')
+    covN = baseN + covRefs.length
+  }
+
+  const covIntro = `Covalent ${screening ? 'screening' : 'docking'} was targeted at residue <b>${p.covalent_residue || 'the selected nucleophile'}</b>${p.covalent_atom ? ` (nucleophilic ${p.covalent_atom} atom)` : ''}. The electrophilic warhead of each ligand was perceived automatically from its two-dimensional connectivity using RDKit<sup>${rdkitN}</sup> substructure (SMARTS) matching.`
+  const covBody = p.covalent_mode === 'tethered'
+    ? `Following the docking described above, the top-ranked pose was refined under a harmonic distance restraint that tethers the warhead's reactive atom to the target nucleophile at its ideal covalent bond length, with the receptor held rigid and the ligand relaxed on the Universal Force Field (UFF)<sup>${uffN}</sup> as implemented in Open Babel<sup>3</sup>. This distance-restrained (tethered) refinement &mdash; conceptually related to established covalent-docking protocols<sup>${covN}</sup> &mdash; yields the covalently bound complex, in which the warhead&ndash;nucleophile separation corresponds to a formed covalent bond.`
+    : `Following the docking described above, poses were re-ranked by a combined criterion that augments the predicted binding free energy with the geometric proximity of the warhead's reactive atom to the target nucleophile; a pose was considered covalently compatible when this distance was &le;&nbsp;${p.covalent_max_dist ?? 3.5}&nbsp;&Aring;. This geometry-guided pose filtering is a rapid heuristic related to established covalent-docking strategies<sup>${covN}</sup>; it identifies poses positioned for covalent reaction but does not itself form the bond.`
+  const covalent = p.covalent ? para(`${covIntro} ${covBody}`) : ''
+
   const inter = para(
     `Interactions between the top-ranked pose and the receptor were identified geometrically from the three-dimensional coordinates: hydrogen bonds were assigned for polar donor&ndash;acceptor (N/O&middot;&middot;&middot;N/O) distances of 2.4&ndash;3.5&nbsp;&Aring;, salt bridges for oppositely charged groups within 4.0&nbsp;&Aring;, and hydrophobic contacts for carbon&ndash;carbon distances &le;&nbsp;4.0&nbsp;&Aring;.`)
 
-  const refs = `<h2>References</h2><ol style="font-size:11px;line-height:1.6;color:#475569;padding-left:18px;margin-top:6px">${R.map((r) => `<li style="margin:3px 0">${r}</li>`).join('')}</ol>`
+  const refs = `<h2>References</h2><ol style="font-size:11px;line-height:1.6;color:#475569;padding-left:18px;margin-top:6px">${R.concat(covRefs).map((r) => `<li style="margin:3px 0">${r}</li>`).join('')}</ol>`
 
   const disclaimer = `<p style="font-size:10.5px;color:#94a3b8;font-style:italic;margin-top:16px;border-top:1px dashed #e2e8f0;padding-top:8px">
     * This computational methods section is provided as a <b>guidance template only</b>. Please rewrite and adapt it in your own
     words to reflect the specifics of your own study before including it in any publication &mdash; do not copy it verbatim.</p>`
 
-  return `<h2>Computational methods&nbsp;<span style="color:#0f766e">*</span></h2>${intro}${ligand}${dock}${screen}${inter}${refs}${disclaimer}`
+  // interpretation of covalent results sits within the methods block, before the references (references always last)
+  const interpretation = p.covalent ? covalentInterpretationHTML(p, screening) : ''
+  return `<h2>Computational methods&nbsp;<span style="color:#0f766e">*</span></h2>${intro}${ligand}${dock}${covalent}${screen}${inter}${disclaimer}${interpretation}${refs}`
+}
+
+// Reader-facing guidance on how to interpret covalent results (mode-aware).
+function covalentInterpretationHTML(p, screening = false) {
+  const tethered = p.covalent_mode === 'tethered'
+  const res = p.covalent_residue || 'the target residue'
+  const atom = p.covalent_atom ? ` (${p.covalent_atom})` : ''
+
+  const intro = `A covalent ${screening ? 'hit' : 'pose'} must satisfy two conditions together: a favourable fit within the binding pocket and the correct geometry for the ligand's warhead to reach the reactive residue <b>${res}</b>${atom}. Covalent poses are therefore judged first on their ability to form the bond, with the predicted binding energy retained as a supporting measure of how well the compound is otherwise accommodated.`
+
+  const bond = tethered
+    ? `The pose shown with the explicit covalent bond is the orientation best positioned to react with ${res}: the ligand is docked and this pose is then refined under a light geometric restraint so the warhead adopts a realistic covalent bond length. It represents the recommended <b>covalent binding mode</b>.`
+    : `The highlighted pose is the orientation whose warhead comes closest to reacting with ${res} &mdash; the recommended <b>covalent binding mode</b>. In this geometry-guided mode the bond is not formed explicitly; the pose is instead scored on how well the warhead is positioned to react.`
+
+  const validate = `Because the reactive geometry is given priority, this pose need not carry the single most favourable predicted binding energy among all sampled poses. This is expected and appropriate rather than a limitation: for a covalent inhibitor the bound state is defined by the formed bond, so a modest energetic trade-off in favour of correct covalent orientation <i>validates</i> the result. The reported affinity remains a useful indicator of the molecular recognition that positions the warhead for reaction.`
+
+  const tail = `If the warhead cannot approach ${res} in any pose, the compound is unlikely to engage this residue covalently in the chosen pocket; re-centring or enlarging the search box on the residue, or selecting a different reactive residue, usually resolves this.`
+
+  return `<h2>Interpretation of covalent ${screening ? 'screening' : 'docking'} results</h2>
+    <div style="background:#f0fdfa;border:1px solid #99f6e4;border-radius:10px;padding:14px 16px;font-size:12px;line-height:1.7;color:#334155">
+      <p style="margin:0 0 8px">${intro}</p>
+      <p style="margin:0 0 8px">${bond}</p>
+      <p style="margin:0 0 8px">${validate}</p>
+      <p style="margin:0">${tail}</p>
+    </div>`
 }
 
 function buildReportHTML(meta, sections) {
@@ -645,12 +693,11 @@ function buildReportHTML(meta, sections) {
     </tbody></table>` : ''
 
   const methods = sections.methods ? methodsHTML(meta) : ''
-
   return `<!doctype html><html><head><meta charset="utf-8"><title>${meta.target} — DDS Report</title>${style}</head>
   <body>
     <h1>${meta.target} — Docking Report</h1>
     <div class="sub">PDB ${meta.pdb} · ${meta.mode === 'screen' ? 'Virtual screening' : 'Single docking'} · engine AutoDock Vina (${meta.scoring})</div>
-    ${summary}${posesTbl}${interTbl}${screenTbl}${methods}
+    ${summary}${posesTbl}${interTbl}${screenTbl}${methods}${interpretation}
     <div class="author" style="margin-top:30px;border-top:1px solid #e2e8f0;padding-top:10px">Generated by Drug Design Studio (DDS)</div>
   </body></html>`
 }

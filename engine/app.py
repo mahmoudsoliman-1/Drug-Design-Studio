@@ -18,9 +18,9 @@ from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from typing import Optional, List
 
-from ddsengine import prep, dock, interactions, analysis, minimize
+from ddsengine import prep, dock, interactions, analysis, minimize, covalent
 
-app = FastAPI(title="Drug Design Studio Engine", version="1.1.0")
+app = FastAPI(title="Drug Design Studio Engine", version="1.0.0")
 app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"])
 
 from ddsengine.paths import data_dir  # noqa: E402
@@ -29,6 +29,9 @@ _ENGINE_DIR = os.path.dirname(os.path.abspath(__file__))
 JOB_DIR = os.path.join(data_dir(), "jobs")
 COMPLEX_DIR = os.path.join(JOB_DIR, "complexes")
 os.makedirs(COMPLEX_DIR, exist_ok=True)
+# licence-agreement marker (on disk, so acceptance persists identically on mac & windows,
+# independent of the WebView's localStorage which differs between WKWebView and WebView2)
+AGREEMENT_FILE = os.path.join(data_dir(), "agreement.json")
 
 RECEPTORS = {}       # receptor_id -> {pdbqt, protein_pdb, meta}   (in-memory, current run)
 COMPLEXES = {}       # complex_id -> pdb text                       (memory cache)
@@ -67,6 +70,12 @@ class DockReq(BaseModel):
     exhaustiveness: int = 16
     num_modes: int = 9
     label: Optional[str] = None
+    # covalent docking: rank poses by warhead↔nucleophile reach
+    covalent: bool = False
+    covalent_residue: Optional[str] = None   # nucleophile key "chain:resn:resi"
+    covalent_warhead: Optional[str] = None   # override warhead name; None = auto-detect
+    covalent_max_dist: float = 3.5
+    covalent_mode: str = "geometry"          # "geometry" | "tethered"
 
 
 class MinimizeReq(BaseModel):
@@ -97,11 +106,27 @@ class ScreenReq(BaseModel):
     scoring: str = "vina"
     exhaustiveness: int = 8
     label: Optional[str] = None
+    # covalent virtual screening (same scoring as single docking)
+    covalent: bool = False
+    covalent_residue: Optional[str] = None
+    covalent_warhead: Optional[str] = None
+    covalent_max_dist: float = 3.5
+    covalent_mode: str = "geometry"          # "geometry" | "tethered"
+
+
+class CovalentResiduesReq(BaseModel):
+    receptor_id: str
+    center: Optional[dict] = None
+    size: Optional[dict] = None
 
 
 class AiReq(BaseModel):
     action: str
     context: dict = {}
+
+
+class AgreementReq(BaseModel):
+    version: str
 
 
 # --------------------------- AI (Groq / Llama) ---------------------------
@@ -246,6 +271,16 @@ def _run_dock(jid):
         poses = res["poses"]
         if not poses:
             raise RuntimeError("no poses returned")
+        # covalent docking: resolve the target nucleophile once (geometry scoring per pose)
+        is_cov = bool(req.get("covalent"))
+        nuc = cov_override = None
+        cov_max = req.get("covalent_max_dist", 3.5)
+        cov_mode = req.get("covalent_mode", "geometry")
+        if is_cov:
+            nuc = covalent.resolve_nucleophile(rec["protein_pdb"], req.get("covalent_residue") or "")
+            if not nuc:
+                raise RuntimeError("covalent target residue not found — pick a reactive residue in the binding site")
+            cov_override = req.get("covalent_warhead")
         # build a complex + interactions for EVERY pose so the UI can switch poses
         ligand_2d = None
         pose_rows = []
@@ -259,22 +294,62 @@ def _run_dock(jid):
             cpdb = _build_complex(rec["protein_pdb"], p["pdbqt"])
             cpid = uuid.uuid4().hex[:12]
             _save_complex(cpid, cpdb)
-            pose_rows.append({
+            row = {
                 "pose": p["pose"], "affinity": p["affinity"],
                 "rmsd_lb": p["rmsd_lb"], "rmsd_ub": p["rmsd_ub"],
                 "complex_pdb": cpdb, "complex_id": cpid,
                 "interactions": inter_p,
-            })
+            }
+            if is_cov:
+                row["covalent"] = covalent.score_pose(p["pdbqt"], nuc, cov_override, cov_max)
+            pose_rows.append(row)
+        if is_cov:
+            # re-rank by combined affinity + warhead-reach geometry (best first)
+            pose_rows.sort(key=lambda r: covalent.combined_score(r["affinity"], r.get("covalent")))
+        top = pose_rows[0]
+        # tethered mode: refine the top pose so the warhead forms the covalent bond
+        if is_cov and cov_mode == "tethered":
+            tc = top.get("covalent") or {}
+            if tc.get("warhead_xyz") and tc.get("nuc_xyz"):
+                try:
+                    tr = covalent.tether_complex(
+                        top["complex_pdb"], tc["warhead_xyz"], tc["nuc_xyz"],
+                        tc.get("warhead_elem", "C"), tc.get("nuc_elem", "S"))
+                    ncid = uuid.uuid4().hex[:12]
+                    _save_complex(ncid, tr["pdb"])
+                    top["complex_pdb"] = tr["pdb"]
+                    top["complex_id"] = ncid
+                    top["covalent"] = {**tc, "mode": "tethered", "compatible": True,
+                                       "distance": tr["distance"], "target": tr["target"],
+                                       "moved": tr["moved"], "warhead_xyz": tr["warhead_xyz"]}
+                except Exception as e:
+                    top["covalent"] = {**tc, "mode": "tethered", "tether_error": str(e)[:140]}
+        cov_summary = None
+        if is_cov:
+            reached = next((r["covalent"] for r in pose_rows
+                            if r.get("covalent") and r["covalent"].get("compatible")), None)
+            best_cov = top.get("covalent") or {}
+            cov_summary = {
+                "residue": nuc["residue"], "chain": nuc["chain"],
+                "atom": nuc["atom"], "atom_label": nuc["atom_label"],
+                "warhead": best_cov.get("warhead"),
+                "max_dist": cov_max, "mode": cov_mode,
+                "best_distance": (best_cov if cov_mode == "tethered" else (reached or best_cov)).get("distance"),
+                "compatible": bool(best_cov.get("compatible")) if cov_mode == "tethered" else bool(reached),
+                "moved": best_cov.get("moved"),
+                "target": best_cov.get("target"),
+            }
         job["result"] = {
-            "complex_id": pose_rows[0]["complex_id"],
+            "complex_id": top["complex_id"],
             "properties": props,
             "lipinski_pass": prep.lipinski_pass(props),
             "poses": pose_rows,
-            "interactions": pose_rows[0]["interactions"],
+            "interactions": top["interactions"],
             "ligand_2d": ligand_2d,
-            "complex_pdb": pose_rows[0]["complex_pdb"],
-            "best_affinity": poses[0]["affinity"],
-            "ligand_efficiency": round(poses[0]["affinity"] / max(1, props["mw"] / 12.0), 2),
+            "complex_pdb": top["complex_pdb"],
+            "best_affinity": top["affinity"],
+            "ligand_efficiency": round(top["affinity"] / max(1, props["mw"] / 12.0), 2),
+            "covalent": cov_summary,
             "params": {
                 "engine": "AutoDock Vina 1.2.5",
                 "scoring": req.get("scoring", "vina"),
@@ -283,6 +358,11 @@ def _run_dock(jid):
                 "center": req.get("center"), "size": req.get("size"),
                 "protonate": req.get("protonate", True), "ph": req.get("ph", 7.4),
                 "receptor_ph": rec.get("ph", 7.4),
+                "covalent": is_cov,
+                "covalent_residue": nuc["residue"] if nuc else None,
+                "covalent_atom": nuc["atom_label"] if nuc else None,
+                "covalent_max_dist": cov_max if is_cov else None,
+                "covalent_mode": cov_mode if is_cov else None,
             },
         }
         job["status"] = "done"
@@ -303,6 +383,16 @@ def _run_screen(jid):
         ligs = req["ligands"]
         job["progress"] = {"done": 0, "total": len(ligs)}
         _save_job(job)
+        # covalent virtual screening: resolve the single shared target nucleophile
+        is_cov = bool(req.get("covalent"))
+        nuc = cov_override = None
+        cov_max = req.get("covalent_max_dist", 3.5)
+        cov_mode = req.get("covalent_mode", "geometry")
+        if is_cov:
+            nuc = covalent.resolve_nucleophile(rec["protein_pdb"], req.get("covalent_residue") or "")
+            if not nuc:
+                raise RuntimeError("covalent target residue not found — pick a reactive residue in the binding site")
+            cov_override = req.get("covalent_warhead")
         results = []
         for idx, item in enumerate(ligs):
             row = {"id": item["id"], "smiles": item["smiles"]}
@@ -311,13 +401,35 @@ def _run_screen(jid):
                 res = dock.run_vina(rec["pdbqt"], lig_pdbqt, req["center"], req["size"],
                                     scoring=req.get("scoring", "vina"),
                                     exhaustiveness=req.get("exhaustiveness", 8), num_modes=5)
-                best = res["poses"][0]
+                cov = None
+                if is_cov:
+                    # score every pose, keep the one with the best covalent geometry+affinity
+                    scored = [(covalent.combined_score(p["affinity"],
+                               covalent.score_pose(p["pdbqt"], nuc, cov_override, cov_max)), p)
+                              for p in res["poses"]]
+                    scored.sort(key=lambda t: t[0])
+                    best = scored[0][1]
+                    cov = covalent.score_pose(best["pdbqt"], nuc, cov_override, cov_max)
+                else:
+                    best = res["poses"][0]
                 try:
                     l2d, inter = analysis.analyze(rec["pdbqt"], best["pdbqt"])
                 except Exception:
                     l2d, inter = None, interactions.detect(rec["pdbqt"], best["pdbqt"])
+                cpx = _build_complex(rec["protein_pdb"], best["pdbqt"])
+                # tethered mode: refine so the warhead forms the covalent bond
+                if is_cov and cov_mode == "tethered" and cov and cov.get("warhead_xyz") and cov.get("nuc_xyz"):
+                    try:
+                        tr = covalent.tether_complex(cpx, cov["warhead_xyz"], cov["nuc_xyz"],
+                                                     cov.get("warhead_elem", "C"), cov.get("nuc_elem", "S"))
+                        cpx = tr["pdb"]
+                        cov = {**cov, "mode": "tethered", "compatible": True,
+                               "distance": tr["distance"], "target": tr["target"],
+                               "moved": tr["moved"], "warhead_xyz": tr["warhead_xyz"]}
+                    except Exception:
+                        pass
                 cid = uuid.uuid4().hex[:12]
-                _save_complex(cid, _build_complex(rec["protein_pdb"], best["pdbqt"]))
+                _save_complex(cid, cpx)
                 row.update({
                     "affinity": best["affinity"], "status": "ok",
                     "mw": props["mw"], "logp": props["logp"], "hbd": props["hbd"],
@@ -325,15 +437,33 @@ def _run_screen(jid):
                     "lipinski_pass": prep.lipinski_pass(props),
                     "interactions": inter, "ligand_2d": l2d, "complex_id": cid,
                 })
+                if is_cov:
+                    row["covalent"] = cov
+                    row["covalent_distance"] = (cov or {}).get("distance")
+                    row["covalent_compatible"] = bool(cov and cov.get("compatible"))
+                    row["warhead"] = (cov or {}).get("warhead")
             except Exception as e:
                 row.update({"status": "error", "error": str(e)[:120], "affinity": None})
             results.append(row)
             job["progress"] = {"done": idx + 1, "total": len(ligs)}
             _save_job(job)
-        ok = sorted([r for r in results if r.get("affinity") is not None], key=lambda r: r["affinity"])
+        okrows = [r for r in results if r.get("affinity") is not None]
+        if is_cov:
+            # covalent-compatible hits first, then by combined affinity+geometry
+            okrows.sort(key=lambda r: (not r.get("covalent_compatible"),
+                                       covalent.combined_score(r["affinity"], r.get("covalent"))))
+        else:
+            okrows.sort(key=lambda r: r["affinity"])
+        ok = okrows
         fail = [r for r in results if r.get("affinity") is None]
         job["result"] = {
             "results": ok + fail, "n_ok": len(ok), "n_fail": len(fail),
+            "covalent": ({
+                "residue": nuc["residue"], "chain": nuc["chain"],
+                "atom": nuc["atom"], "atom_label": nuc["atom_label"],
+                "max_dist": cov_max, "mode": cov_mode,
+                "n_compatible": sum(1 for r in ok if r.get("covalent_compatible")),
+            } if is_cov else None),
             "params": {
                 "engine": "AutoDock Vina 1.2.5",
                 "scoring": req.get("scoring", "vina"),
@@ -342,6 +472,11 @@ def _run_screen(jid):
                 "center": req.get("center"), "size": req.get("size"),
                 "protonate": True, "ph": 7.4, "n_ligands": len(ligs),
                 "receptor_ph": rec.get("ph", 7.4),
+                "covalent": is_cov,
+                "covalent_residue": nuc["residue"] if nuc else None,
+                "covalent_atom": nuc["atom_label"] if nuc else None,
+                "covalent_max_dist": cov_max if is_cov else None,
+                "covalent_mode": cov_mode if is_cov else None,
             },
         }
         job["status"] = "done"
@@ -382,6 +517,28 @@ def health():
     return {"status": "ok", "engine": "AutoDock Vina 1.2.5",
             "vina_binary": os.path.exists(dock.VINA),
             "receptors_loaded": len(RECEPTORS), "jobs": len(JOBS), "running": running}
+
+
+@app.get("/api/agreement")
+def get_agreement():
+    """Return the licence version the user has accepted (or null) — read from disk
+    so it persists identically on macOS and Windows."""
+    try:
+        with open(AGREEMENT_FILE) as f:
+            return {"agreed_version": json.load(f).get("version")}
+    except Exception:
+        return {"agreed_version": None}
+
+
+@app.post("/api/agreement")
+def set_agreement(req: AgreementReq):
+    """Record that the user accepted the licence (version marker written to disk)."""
+    try:
+        with open(AGREEMENT_FILE, "w") as f:
+            json.dump({"version": req.version}, f)
+    except Exception:
+        pass
+    return {"ok": True}
 
 
 @app.post("/api/receptor/fetch")
@@ -437,10 +594,30 @@ def ligand_preview(req: LigandPreviewReq):
             ligand_pdb = prep.ligand_3d_pdb(mol)
         except Exception:
             ligand_pdb = None
+        wh = covalent.detect_warhead(mol)
+        warhead = {"name": wh["name"], "label": wh["label"]} if wh else None
         return {"ok": True, "ligand_2d": analysis._depiction(mol),
-                "ligand_pdb": ligand_pdb, "properties": prep.ligand_props(mol)}
+                "ligand_pdb": ligand_pdb, "properties": prep.ligand_props(mol),
+                "warhead": warhead}
     except Exception as e:
         raise HTTPException(400, "invalid ligand: %s" % e)
+
+
+@app.get("/api/covalent/warheads")
+def covalent_warheads():
+    """Catalog of recognised electrophilic warheads (for the override menu)."""
+    return {"warheads": covalent.warhead_catalog()}
+
+
+@app.post("/api/covalent/residues")
+def covalent_residues(req: CovalentResiduesReq):
+    """Nucleophilic residues (Cys/Ser/Thr/Lys/Tyr/His) available as covalent
+    targets — filtered to the search box when a center+size are supplied."""
+    rec = RECEPTORS.get(req.receptor_id)
+    if not rec:
+        raise HTTPException(404, "unknown receptor_id (prepare a receptor first)")
+    residues = covalent.find_nucleophiles(rec["protein_pdb"], req.center, req.size)
+    return {"residues": residues, "total": len(residues)}
 
 
 @app.get("/api/ai/status")

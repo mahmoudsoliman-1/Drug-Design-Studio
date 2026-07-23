@@ -23,6 +23,17 @@ export function health() {
   return call('/api/health')
 }
 
+// licence-agreement marker persisted on disk by the engine (OS-independent)
+export function getAgreement() {
+  return call('/api/agreement')
+}
+export function setAgreement(version) {
+  return call('/api/agreement', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ version }),
+  })
+}
+
 export function fetchReceptor(pdbId, opts = {}) {
   return call('/api/receptor/fetch', {
     method: 'POST', headers: { 'Content-Type': 'application/json' },
@@ -86,6 +97,19 @@ export function screen(payload) {
     method: 'POST', headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(payload),
   })
+}
+
+// covalent docking: nucleophilic residues available as targets (filtered to the box)
+export function covalentResidues(receptorId, box) {
+  return call('/api/covalent/residues', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ receptor_id: receptorId, center: box?.center, size: box?.size }),
+  })
+}
+
+// catalog of recognised electrophilic warheads (for the override menu)
+export function covalentWarheads() {
+  return call('/api/covalent/warheads')
 }
 
 export function getComplex(id) {

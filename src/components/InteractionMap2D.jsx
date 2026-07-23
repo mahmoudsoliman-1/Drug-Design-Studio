@@ -15,6 +15,8 @@ const TYPES = {
   'π-stacking':  { key: 'pi',    line: '#d946ef', legend: 'π–π stacking',          dist: true,  stops: ['#fae8ff', '#f0abfc', '#e879f9'], edge: '#c026d3', glow: '#e879f9', dash: '9 4' },
   'Hydrophobic': { key: 'hydro', line: '#f472b6', legend: 'Hydrophobic contact',  dist: false, stops: ['#fce7f3', '#f9a8d4', '#f472b6'], edge: '#db2777', glow: '#f472b6', dash: '1 5' },
 }
+// covalent bond — solid, distinct teal; only drawn for a tethered (bond-formed) pose
+const COV = { key: 'cov', line: '#0d9488', legend: 'Covalent bond', dist: true, stops: ['#ccfbf1', '#5eead4', '#2dd4bf'], edge: '#0f766e', glow: '#2dd4bf', dash: '' }
 const PRIO = { 'Salt bridge': 0, 'H-bond': 1, 'π-stacking': 2, 'Hydrophobic': 3 }
 const EL_COLOR = { O: '#dc2626', N: '#2563eb', S: '#d97706', P: '#ea580c', F: '#16a34a', Cl: '#16a34a', Br: '#a16207', I: '#7c3aed' }
 
@@ -26,7 +28,7 @@ const DISC_R = 22
 const MAX_HYDRO = 5
 const MAX_TOTAL = 10
 
-export default function InteractionMap2D({ ligand = 'Ligand', pose = 1, affinity, interactions = [], ligand2d = null }) {
+export default function InteractionMap2D({ ligand = 'Ligand', pose = 1, affinity, interactions = [], ligand2d = null, covalentBond = null }) {
   const svgRef = useRef(null)
   const hasStruct = ligand2d && ligand2d.atoms && ligand2d.atoms.length
 
@@ -63,10 +65,19 @@ export default function InteractionMap2D({ ligand = 'Ligand', pose = 1, affinity
   const hydro = dedup.filter((r) => r.type === 'Hydrophobic').sort((a, b) => a.distance - b.distance)
   let residues = [...nonHydro, ...hydro.slice(0, Math.max(0, Math.min(MAX_HYDRO, MAX_TOTAL - nonHydro.length)))]
 
+  // covalent bond (tethered pose only): show it as a dedicated node bonded to the
+  // warhead atom, replacing any ordinary contact drawn for the same residue
+  const showCov = covalentBond && hasStruct && atomById[covalentBond.ligAtom] != null
+  if (showCov) {
+    residues = residues.filter((r) => r.residue !== covalentBond.residue)
+    residues.push({ residue: covalentBond.residue, type: 'Covalent', covalent: true,
+      lig_atom: covalentBond.ligAtom, distance: covalentBond.distance })
+  }
+
   // anchor each residue to its ligand atom (or centre)
   residues = residues.map((r) => {
     const anchor = (hasStruct && atomById[r.lig_atom]) ? { x: atomById[r.lig_atom].x, y: atomById[r.lig_atom].y } : { x: C.x, y: C.y }
-    return { ...r, t: TYPES[r.type], anchor, pref: Math.atan2(anchor.y - C.y, anchor.x - C.x) }
+    return { ...r, t: r.covalent ? COV : TYPES[r.type], anchor, pref: Math.atan2(anchor.y - C.y, anchor.x - C.x) }
   })
 
   // --- place on ring: even spacing (no overlaps), rotated to best match anchor directions ---
@@ -105,7 +116,7 @@ export default function InteractionMap2D({ ligand = 'Ligand', pose = 1, affinity
               <pattern id="grid" width="22" height="22" patternUnits="userSpaceOnUse"><circle cx="1" cy="1" r="1" fill="#eef2f7" /></pattern>
               <filter id="ddsGlow" x="-70%" y="-70%" width="240%" height="240%"><feGaussianBlur stdDeviation="5" /></filter>
               <radialGradient id="ligHalo" cx="50%" cy="50%" r="50%"><stop offset="0%" stopColor="#eff6ff" stopOpacity="0.9" /><stop offset="70%" stopColor="#eff6ff" stopOpacity="0.3" /><stop offset="100%" stopColor="#eff6ff" stopOpacity="0" /></radialGradient>
-              {Object.values(TYPES).map((t) => (
+              {[...Object.values(TYPES), COV].map((t) => (
                 <radialGradient key={t.key} id={`sph-${t.key}`} cx="35%" cy="28%" r="80%">
                   <stop offset="0%" stopColor={t.stops[0]} />
                   <stop offset="55%" stopColor={t.stops[1]} />
@@ -128,13 +139,25 @@ export default function InteractionMap2D({ ligand = 'Ligand', pose = 1, affinity
               const from = { x: r.disc.x + d.x * DISC_R, y: r.disc.y + d.y * DISC_R }
               const to = { x: r.anchor.x - d.x * 6, y: r.anchor.y - d.y * 6 }
               const pill = { x: from.x + (to.x - from.x) * 0.4, y: from.y + (to.y - from.y) * 0.4 }
+              const covLbl = { x: from.x + (to.x - from.x) * 0.68, y: from.y + (to.y - from.y) * 0.68 }
               return (
                 <g key={`c${i}`}>
-                  <line x1={from.x} y1={from.y} x2={to.x} y2={to.y} stroke={r.t.line} strokeWidth="1.6" strokeDasharray={r.t.dash} strokeLinecap="round" opacity="0.85" />
-                  <circle cx={r.anchor.x} cy={r.anchor.y} r="3.6" fill={r.t.line} fillOpacity="0.3" stroke={r.t.line} strokeWidth="1.2" />
+                  {r.covalent ? (
+                    <>
+                      {/* solid double-stroke covalent bond */}
+                      <line x1={from.x} y1={from.y} x2={to.x} y2={to.y} stroke={r.t.line} strokeWidth="4.5" strokeLinecap="round" />
+                      <line x1={from.x} y1={from.y} x2={to.x} y2={to.y} stroke="#5eead4" strokeWidth="1.6" strokeLinecap="round" />
+                      <circle cx={r.anchor.x} cy={r.anchor.y} r="4.2" fill={r.t.line} stroke="#ffffff" strokeWidth="1.4" />
+                      <text x={covLbl.x} y={covLbl.y - 6} textAnchor="middle" fontSize="9" fontWeight="700" fill={r.t.edge}
+                        style={{ paintOrder: 'stroke', stroke: '#ffffff', strokeWidth: 3, strokeLinejoin: 'round' }}>covalent</text>
+                    </>
+                  ) : (
+                    <line x1={from.x} y1={from.y} x2={to.x} y2={to.y} stroke={r.t.line} strokeWidth="1.6" strokeDasharray={r.t.dash} strokeLinecap="round" opacity="0.85" />
+                  )}
+                  {!r.covalent && <circle cx={r.anchor.x} cy={r.anchor.y} r="3.6" fill={r.t.line} fillOpacity="0.3" stroke={r.t.line} strokeWidth="1.2" />}
                   {r.t.dist && (
                     <g>
-                      <rect x={pill.x - 18} y={pill.y - 8} width="36" height="16" rx="8" fill="#ffffff" stroke={r.t.line} strokeWidth="0.75" />
+                      <rect x={pill.x - 18} y={pill.y - 8} width="36" height="16" rx="8" fill="#ffffff" stroke={r.t.line} strokeWidth={r.covalent ? '1.2' : '0.75'} />
                       <text x={pill.x} y={pill.y + 3} textAnchor="middle" fontSize="9" fontWeight="600" fill={r.t.line}>{r.distance} Å</text>
                     </g>
                   )}
@@ -158,7 +181,7 @@ export default function InteractionMap2D({ ligand = 'Ligand', pose = 1, affinity
 
             {/* ligand name is shown in the header/subtitle above — no central pill,
                 so it never overlaps the interaction connectors */}
-            <Legend x={30} y={H - 84} />
+            <Legend x={30} y={H - (showCov ? 106 : 84)} covalent={showCov} />
           </svg>
         </div>
       </div>
@@ -202,16 +225,17 @@ function Bond({ b, atomById }) {
   return <line x1={p1.x} y1={p1.y} x2={p2.x} y2={p2.y} stroke="#1e293b" strokeWidth="1.8" strokeLinecap="round" />
 }
 
-function Legend({ x, y }) {
+function Legend({ x, y, covalent }) {
+  const items = covalent ? [...Object.values(TYPES), COV] : Object.values(TYPES)
   return (
     <g>
       <text x={x} y={y - 16} fontSize="10.5" fontWeight="700" fill="#334155" letterSpacing="0.5">INTERACTION TYPES</text>
-      {Object.values(TYPES).map((t, i) => {
+      {items.map((t, i) => {
         const yy = y + i * 22
         return (
           <g key={t.key}>
             <circle cx={x + 8} cy={yy} r="7" fill={`url(#sph-${t.key})`} />
-            <line x1={x + 24} y1={yy} x2={x + 50} y2={yy} stroke={t.line} strokeWidth="2" strokeDasharray={t.dash} strokeLinecap="round" />
+            <line x1={x + 24} y1={yy} x2={x + 50} y2={yy} stroke={t.line} strokeWidth={t.key === 'cov' ? '3.5' : '2'} strokeDasharray={t.dash} strokeLinecap="round" />
             <text x={x + 62} y={yy + 4} fontSize="11" fill="#475569">{t.legend}</text>
           </g>
         )

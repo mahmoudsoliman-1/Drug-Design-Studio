@@ -19,6 +19,7 @@ engine/*.spec.bak
 
 # engine runtime data
 engine/jobs/
+engine/agreement.json
 
 # os
 .DS_Store

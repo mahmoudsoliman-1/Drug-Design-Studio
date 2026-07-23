@@ -9,11 +9,14 @@ import { saveFile } from '../download.js'
 export default function MoleculeViewer({
   style = 'cartoon', showLigand = true, spin = false, showInteractions = false,
   pdb = null, ligResn = 'MK1', empty = false, box = null, showBox = false,
+  covalentTarget = null, overlayLigand = null,
 }) {
   const boxKey = box ? `${box.center.x}|${box.center.y}|${box.center.z}|${box.size.x}|${box.size.y}|${box.size.z}` : ''
+  const covKey = covalentTarget ? JSON.stringify(covalentTarget) : ''
   const hostRef = useRef(null)
   const viewerRef = useRef(null)
   const modelRef = useRef(null)
+  const overlayModelRef = useRef(null)
   const [ready, setReady] = useState(false)
   const [status, setStatus] = useState('loading')
   const [counts, setCounts] = useState({ hb: 0, hydro: 0 })
@@ -35,6 +38,7 @@ export default function MoleculeViewer({
       viewer.removeAllShapes(); viewer.removeAllLabels()
       applyStyle(viewer, style, showLigand, ligResn)
       if (showInteractions && modelRef.current) drawInteractions(viewer, modelRef.current, SCALE, ligResn)
+      if (covalentTarget) drawCovalentTarget(viewer, covalentTarget, SCALE)
       if (bg === 'transparent') viewer.setBackgroundColor(0xffffff, 0)
       else if (bg === 'white') viewer.setBackgroundColor(0xffffff, 1)
       else viewer.setBackgroundColor(0x000000, 1)
@@ -47,6 +51,7 @@ export default function MoleculeViewer({
     viewer.removeAllShapes(); viewer.removeAllLabels()
     applyStyle(viewer, style, showLigand, ligResn)
     if (showInteractions && modelRef.current) drawInteractions(viewer, modelRef.current, 1, ligResn)
+    if (covalentTarget) drawCovalentTarget(viewer, covalentTarget, 1)
     viewer.setBackgroundColor(0x070b14, 1)
     viewer.render()
     if (!uri) return
@@ -74,7 +79,7 @@ export default function MoleculeViewer({
     async function load() {
       if (empty) {
         viewer.removeAllModels(); viewer.removeAllShapes(); viewer.removeAllLabels(); viewer.removeAllSurfaces()
-        modelRef.current = null
+        modelRef.current = null; overlayModelRef.current = null
         viewer.render()
         setStatus('empty')
         return
@@ -89,9 +94,11 @@ export default function MoleculeViewer({
         }
         if (cancelled) return
         viewer.removeAllModels(); viewer.removeAllShapes(); viewer.removeAllLabels(); viewer.removeAllSurfaces()
+        overlayModelRef.current = null
         modelRef.current = viewer.addModel(text, 'pdb')
         applyStyle(viewer, style, showLigand, ligResn)
         if (showInteractions) setCounts(drawInteractions(viewer, modelRef.current, 1, ligResn))
+        if (covalentTarget) drawCovalentTarget(viewer, covalentTarget, 1)
         viewer.zoomTo()          // fit & centre the whole structure
         viewer.zoom(0.85)
         viewer.center()
@@ -114,9 +121,27 @@ export default function MoleculeViewer({
     applyStyle(viewer, style, showLigand, ligResn)
     if (showInteractions && modelRef.current) setCounts(drawInteractions(viewer, modelRef.current, 1, ligResn))
     else setCounts({ hb: 0, hydro: 0 })
+    if (covalentTarget) drawCovalentTarget(viewer, covalentTarget, 1)
+    if (overlayModelRef.current) styleOverlay(overlayModelRef.current)
     if (showBox && box) drawBox(viewer, box)
     viewer.render()
-  }, [style, showLigand, showInteractions, status, ligResn, showBox, boxKey])
+  }, [style, showLigand, showInteractions, status, ligResn, showBox, boxKey, covKey])
+
+  // overlay ligand (a separately-loaded compound placed at the box centre before
+  // docking) — its own model, re-placed whenever the ligand or box centre changes
+  useEffect(() => {
+    const viewer = viewerRef.current
+    if (!viewer || status !== 'ready') return
+    if (overlayModelRef.current) { try { viewer.removeModel(overlayModelRef.current) } catch {} overlayModelRef.current = null }
+    if (overlayLigand) {
+      try {
+        const m = viewer.addModel(overlayLigand, 'pdb')
+        styleOverlay(m)
+        overlayModelRef.current = m
+      } catch {}
+    }
+    viewer.render()
+  }, [overlayLigand, status])
 
   useEffect(() => {
     const viewer = viewerRef.current
@@ -176,6 +201,29 @@ export default function MoleculeViewer({
             <span className="inline-block h-0.5 w-4 rounded" style={{ background: 'repeating-linear-gradient(90deg,#fbbf24 0 3px,transparent 3px 6px)' }} />
             Hydrophobic <span className="ml-1 font-mono text-amber-400">{counts.hydro}</span>
           </div>
+        </div>
+      )}
+
+      {overlayLigand && !showInteractions && status === 'ready' && (
+        <div className="pointer-events-none absolute bottom-2 left-2 flex items-center gap-1.5 rounded-lg bg-ink-950/70 px-3 py-1.5 text-[11px] text-slate-300 backdrop-blur-sm">
+          <span className="h-2 w-2 rounded-full" style={{ background: '#e879f9' }} />
+          Ligand placed at box centre · pre-docking preview
+        </div>
+      )}
+
+      {covalentTarget && status === 'ready' && (
+        <div className="pointer-events-none absolute bottom-2 right-2 rounded-lg bg-ink-950/70 px-3 py-2 backdrop-blur-sm">
+          <div className="mb-1 text-[10px] font-semibold uppercase tracking-wide text-accent">Covalent</div>
+          <div className="flex items-center gap-1.5 text-[11px] text-slate-300">
+            <span className="h-2.5 w-2.5 rounded-full" style={{ background: '#2dd4bf' }} />
+            {covalentTarget.residueLabel} {covalentTarget.atomLabel} <span className="text-slate-500">nucleophile</span>
+          </div>
+          {covalentTarget.warhead && (
+            <div className="mt-1 flex items-center gap-1.5 text-[11px] text-slate-300">
+              <span className="h-2.5 w-2.5 rounded-full" style={{ background: '#f59e0b' }} />
+              warhead{covalentTarget.distance != null ? ` · ${covalentTarget.distance} Å` : ''}
+            </div>
+          )}
         </div>
       )}
 
@@ -264,24 +312,66 @@ function drawInteractions(viewer, model, fontScale = 1, ligResn = 'MK1') {
   })
   Object.values(resSet).forEach((r) => {
     viewer.setStyle({ chain: r.chain, resi: r.resi, hetflag: false }, { stick: { radius: 0.12, colorscheme: 'whiteCarbon' } })
-    viewer.addLabel(`${r.resn}${r.resi}`, {
-      position: r.pos, fontSize: Math.round(13 * fontScale), font: 'Arial', fontColor: '#ffffff',
-      backgroundColor: '#0f1729', backgroundOpacity: 0.92,
-      borderThickness: 1.4 * fontScale, borderColor: r.t === 'hb' ? '#34d399' : '#fbbf24', inFront: true,
-    })
+    textLabel(viewer, `${r.resn}${r.resi}`, r.pos, r.t === 'hb' ? '#5eead4' : '#fbbf24', 13 * fontScale)
   })
 
   hb.forEach((p) => {
     dashedLine(viewer, p.a, p.b, '#34d399')
     const mid = { x: (p.a.x + p.b.x) / 2, y: (p.a.y + p.b.y) / 2, z: (p.a.z + p.b.z) / 2 }
-    viewer.addLabel(`${p.d.toFixed(1)} Å`, {
-      position: mid, fontSize: Math.round(11 * fontScale), font: 'Arial', fontColor: '#052e2b',
-      backgroundColor: '#a7f3d0', backgroundOpacity: 0.95, borderThickness: 0, inFront: true,
-    })
+    textLabel(viewer, `${p.d.toFixed(1)} Å`, mid, '#5eead4', 11 * fontScale)
   })
   hydro.forEach((p) => dashedLine(viewer, p.a, p.b, '#fbbf24'))
 
   return { hb: hb.length, hydro: hydro.length }
+}
+
+// style for an overlay ligand model (a compound placed pre-docking)
+function styleOverlay(m) {
+  m.setStyle({}, {
+    stick: { radius: 0.2, colorscheme: 'magentaCarbon' },
+    sphere: { scale: 0.26, colorscheme: 'magentaCarbon' },
+  })
+}
+
+// Highlight the covalent target: the nucleophilic residue as sticks + a labelled
+// sphere on its reactive atom. In results (a docked pose) it also draws the
+// warhead atom and a dashed bond to the nucleophile with the distance.
+const COV_TEAL = '#2dd4bf'
+const COV_AMBER = '#f59e0b'
+function drawCovalentTarget(viewer, cov, fontScale = 1) {
+  if (!cov || !cov.nuc) return
+  const n = { x: cov.nuc[0], y: cov.nuc[1], z: cov.nuc[2] }
+
+  // side chain of the target residue, so the user sees the whole nucleophile
+  if (cov.chain != null && cov.resi != null) {
+    viewer.setStyle({ chain: cov.chain, resi: String(cov.resi), hetflag: false },
+      { stick: { radius: 0.16, colorscheme: 'cyanCarbon' } })
+  }
+  viewer.addSphere({ center: n, radius: 0.36, color: COV_TEAL })
+  textLabel(viewer, `${cov.residueLabel || 'Nu'} ${cov.atomLabel || ''}`.trim(), n, '#5eead4', 13 * fontScale)
+
+  if (cov.warhead) {
+    const w = { x: cov.warhead[0], y: cov.warhead[1], z: cov.warhead[2] }
+    viewer.addSphere({ center: w, radius: 0.36, color: COV_AMBER })
+    textLabel(viewer, 'warhead', w, '#fbbf24', 12 * fontScale)
+    // solid cylinder for a formed (tethered) bond; dashed line for geometry proximity
+    if (cov.bonded) viewer.addCylinder({ start: w, end: n, radius: 0.16, color: COV_TEAL, fromCap: 1, toCap: 1 })
+    else dashedLine(viewer, w, n, COV_TEAL)
+    if (cov.distance != null) {
+      const mid = { x: (w.x + n.x) / 2, y: (w.y + n.y) / 2, z: (w.z + n.z) / 2 }
+      textLabel(viewer, `${cov.distance} Å`, mid, '#99f6e4', 12 * fontScale)
+    }
+  }
+}
+
+// a clean text-only 3D label (no filled background block) — bright colour, thin
+// dark outline for legibility against both the dark scene and light cartoon
+function textLabel(viewer, text, position, color, fontSize) {
+  viewer.addLabel(text, {
+    position, fontSize: Math.round(fontSize), font: 'Arial', fontColor: color,
+    backgroundOpacity: 0, borderThickness: 0, inFront: true,
+    showBackground: false,
+  })
 }
 
 // draw the docking search box as a translucent 3D box + wireframe edges + corner nodes
