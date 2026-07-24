@@ -18,7 +18,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from typing import Optional, List
 
-from ddsengine import prep, dock, interactions, analysis, minimize, covalent
+from ddsengine import prep, dock, interactions, analysis, minimize, covalent, validate as validate_mod
 
 app = FastAPI(title="Drug Design Studio Engine", version="1.0.0")
 app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"])
@@ -118,6 +118,15 @@ class CovalentResiduesReq(BaseModel):
     receptor_id: str
     center: Optional[dict] = None
     size: Optional[dict] = None
+
+
+class ValidateReq(BaseModel):
+    receptor_id: Optional[str] = None
+    complex_id: Optional[str] = None
+    complex_pdb: Optional[str] = None
+    ligand_smiles: Optional[str] = None
+    native_pdb: Optional[str] = None       # co-crystal ligand (from the job result)
+    native_smiles: Optional[str] = None
 
 
 class AiReq(BaseModel):
@@ -339,6 +348,19 @@ def _run_dock(jid):
                 "moved": best_cov.get("moved"),
                 "target": best_cov.get("target"),
             }
+        # per-pose re-docking RMSD to the co-crystal ligand (cognate re-docking only;
+        # None when there is no matching native reference — e.g. a blind dock)
+        native_pdb0 = rec.get("ligand_pdb")
+        native_smi0 = (rec.get("meta") or {}).get("native_ligand_smiles")
+        if native_pdb0 and native_smi0:
+            try:
+                nat_mol = validate_mod.build_native(native_pdb0, native_smi0)
+                dsmi0 = req.get("smiles") or native_smi0
+                for row in pose_rows:
+                    row["rmsd_xray"] = validate_mod.pose_rmsd(nat_mol, row["complex_pdb"], dsmi0)
+            except Exception:
+                pass
+
         job["result"] = {
             "complex_id": top["complex_id"],
             "properties": props,
@@ -350,6 +372,11 @@ def _run_dock(jid):
             "best_affinity": top["affinity"],
             "ligand_efficiency": round(top["affinity"] / max(1, props["mw"] / 12.0), 2),
             "covalent": cov_summary,
+            # native reference (co-crystal ligand) persisted with the job so re-docking
+            # validation works even after the engine restarts / the receptor is unloaded
+            "native_ligand_pdb": rec.get("ligand_pdb"),
+            "native_ligand_smiles": (rec.get("meta") or {}).get("native_ligand_smiles"),
+            "ligand_smiles": req.get("smiles"),
             "params": {
                 "engine": "AutoDock Vina 1.2.5",
                 "scoring": req.get("scoring", "vina"),
@@ -692,6 +719,37 @@ def delete_job(job_id: str):
         except Exception:
             pass
     return {"ok": True}
+
+
+@app.post("/api/validate")
+def validate_docking(req: ValidateReq):
+    """Re-docking validation: RMSD of the docked pose vs the co-crystallised
+    (native) ligand + an overlay structure. Only valid for cognate re-docking."""
+    # prefer the native reference supplied by the client (persisted in the job result);
+    # fall back to the in-memory receptor if it is still loaded
+    native_pdb = req.native_pdb
+    native_smi = req.native_smiles
+    if not native_pdb:
+        rec = RECEPTORS.get(req.receptor_id) if req.receptor_id else None
+        if rec:
+            native_pdb = rec.get("ligand_pdb")
+            native_smi = (rec.get("meta") or {}).get("native_ligand_smiles")
+    if not native_pdb:
+        raise HTTPException(400, "no co-crystallised reference ligand is available for this result — "
+                                 "validation requires re-docking a co-crystal ligand")
+    cpx = req.complex_pdb
+    if not cpx and req.complex_id:
+        cpx = COMPLEXES.get(req.complex_id)
+        if cpx is None:
+            path = os.path.join(COMPLEX_DIR, req.complex_id + ".pdb")
+            if os.path.exists(path):
+                cpx = open(path).read()
+    if not cpx:
+        raise HTTPException(400, "provide a complex_id or complex_pdb of the docked pose")
+    try:
+        return validate_mod.validate(native_pdb, native_smi, cpx, req.ligand_smiles)
+    except Exception as e:
+        raise HTTPException(400, str(e)[:300])
 
 
 @app.post("/api/minimize")

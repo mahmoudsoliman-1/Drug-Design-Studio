@@ -112,6 +112,14 @@ export function covalentWarheads() {
   return call('/api/covalent/warheads')
 }
 
+// re-docking validation: RMSD of a docked pose vs the co-crystal ligand + overlay
+export function validateDocking(payload) {
+  return call('/api/validate', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload),
+  })
+}
+
 export function getComplex(id) {
   return call(`/api/complex/${id}`)
 }

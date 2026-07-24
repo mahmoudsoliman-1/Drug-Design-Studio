@@ -11,7 +11,7 @@ import * as api from './api.js'
 import Logo from './components/Logo.jsx'
 import {
   ResponsiveContainer, BarChart, Bar, XAxis, YAxis, Tooltip, Cell,
-  ScatterChart, Scatter, ZAxis, CartesianGrid,
+  ScatterChart, Scatter, ZAxis, CartesianGrid, LabelList,
 } from 'recharts'
 
 /* ------------------------------------------------------------------ */
@@ -424,9 +424,9 @@ export default function App() {
           {active === 'results' && hasResults ? (
             <>
               {isScreen ? <ScreeningResults result={screenRes} receptor={receptor} box={box} scoring={scoring} />
-                : <ResultsView result={dockRes} receptorName={receptor?.name} />}
+                : <ResultsView result={dockRes} receptorName={receptor?.name} receptor={receptor} ligandSmiles={ligandSmiles} />}
               {aiOpen ? (
-                <aside className="flex w-[340px] shrink-0 flex-col gap-4">
+                <aside className="flex w-[270px] shrink-0 flex-col gap-4">
                   <AiPanel active="results" mode={mode} receptor={receptor} box={box}
                     ligProps={dockRes?.properties} ligandSmiles={ligandSmiles} dockRes={dockRes} screenRes={screenRes}
                     onClose={() => setAiOpen(false)} />
@@ -1383,9 +1383,10 @@ function AiPanel({ active, mode, receptor, box, ligProps, ligandSmiles, dockRes,
 /* ------------------------------------------------------------------ */
 /*  Results dashboard                                                 */
 /* ------------------------------------------------------------------ */
-function ResultsView({ result, receptorName }) {
+function ResultsView({ result, receptorName, receptor, ligandSmiles }) {
   const [viewMode, setViewMode] = useState('off') // 'off' (structure only) | '3d' | '2d' — interaction view
   const [exportOpen, setExportOpen] = useState(false)
+  const [validateOpen, setValidateOpen] = useState(false)
   const [minMode, setMinMode] = useState('pocket')
   const [minBusy, setMinBusy] = useState(false)
   const [minRes, setMinRes] = useState(null) // {pdb, energy_before, energy_after}
@@ -1418,6 +1419,13 @@ function ResultsView({ result, receptorName }) {
   const selAff = sel.affinity ?? best
   const selNum = sel.pose ?? (selPose + 1)
 
+  // re-docking validation is only meaningful when the receptor carries a co-crystal
+  // ligand (cognate re-docking); the button is hidden otherwise
+  // native reference comes from the job result (persisted) or the loaded receptor
+  const nativePdb = result?.native_ligand_pdb
+  const nativeSmiles = result?.native_ligand_smiles || receptor?.native_ligand_smiles
+  const canValidate = !!(nativePdb || receptor?.native_ligand_smiles) && poses.some((p) => p.complex_id)
+
   return (
     <div className="flex min-w-0 flex-1 flex-col gap-4 overflow-auto">
       <div className="flex items-center justify-between">
@@ -1425,10 +1433,18 @@ function ResultsView({ result, receptorName }) {
           <h2 className="text-[15px] font-semibold text-white">Docking Results</h2>
           <p className="text-[11px] text-slate-500">{poses.length} poses · AutoDock Vina · real run</p>
         </div>
-        <button onClick={() => setExportOpen(true)}
-          className="flex items-center gap-2 rounded-xl bg-gradient-to-r from-accent to-accent-dim px-4 py-2 text-[13px] font-semibold text-ink-950 shadow-lg hover:brightness-110">
-          <ExportIcon className="h-4 w-4" /> Export &amp; Prepare
-        </button>
+        <div className="flex items-center gap-2">
+          {canValidate && (
+            <button onClick={() => setValidateOpen(true)} title="Compare the docked poses to the co-crystallised ligand"
+              className="flex items-center gap-2 rounded-xl bg-emerald-500/15 px-4 py-2 text-[13px] font-semibold text-emerald-300 ring-1 ring-emerald-500/30 transition hover:bg-emerald-500/25">
+              <CheckIcon className="h-4 w-4" /> Validate Docking Results
+            </button>
+          )}
+          <button onClick={() => setExportOpen(true)}
+            className="flex items-center gap-2 rounded-xl bg-gradient-to-r from-accent to-accent-dim px-4 py-2 text-[13px] font-semibold text-ink-950 shadow-lg hover:brightness-110">
+            <ExportIcon className="h-4 w-4" /> Export &amp; Prepare
+          </button>
+        </div>
       </div>
 
       <div className="grid grid-cols-4 gap-4">
@@ -1509,11 +1525,11 @@ function ResultsView({ result, receptorName }) {
           <div className="glass rounded-2xl p-4">
             <div className="mb-3 flex items-center justify-between">
               <h3 className="text-[13px] font-semibold text-white">Binding affinity by pose</h3>
-              <span className="text-[10px] text-slate-500">click a bar to view that pose</span>
+              <span className="text-[10px] text-slate-500">click a bar to view that pose{poses.some((p) => p.rmsd_xray != null) ? ' · number = RMSD to X-ray (Å)' : ''}</span>
             </div>
             <div className="h-[180px]">
               <ResponsiveContainer width="100%" height="100%">
-                <BarChart data={poses} margin={{ top: 4, right: 8, bottom: 0, left: -18 }}>
+                <BarChart data={poses} margin={{ top: 16, right: 8, bottom: 0, left: -18 }}>
                   <CartesianGrid strokeDasharray="3 3" stroke="#1c2842" vertical={false} />
                   <XAxis dataKey="pose" tick={{ fill: '#64748b', fontSize: 11 }} axisLine={{ stroke: '#1c2842' }} tickLine={false} />
                   <YAxis tick={{ fill: '#64748b', fontSize: 11 }} axisLine={false} tickLine={false} />
@@ -1521,6 +1537,7 @@ function ResultsView({ result, receptorName }) {
                   <Bar dataKey="affinity" radius={[4, 4, 0, 0]} cursor="pointer"
                     onClick={(data, index) => selectPose(typeof index === 'number' ? index : poses.findIndex((p) => p.pose === data?.pose))}>
                     {poses.map((p, i) => <Cell key={i} fill={i === selPose ? '#2dd4bf' : '#1c6e63'} />)}
+                    <LabelList dataKey="rmsd_xray" content={RmsdBarLabel} />
                   </Bar>
                 </BarChart>
               </ResponsiveContainer>
@@ -1532,10 +1549,6 @@ function ResultsView({ result, receptorName }) {
           <div className="glass rounded-2xl p-3">
             <div className="mb-2 flex items-center justify-between gap-2">
               <h3 className="min-w-0 truncate text-[12.5px] font-semibold text-white">Key interactions <span className="text-[10.5px] font-normal text-slate-500">· pose {selNum}</span></h3>
-              <button onClick={() => setViewMode('2d')} title="Show 2D interaction map"
-                className="flex shrink-0 items-center gap-1 rounded-lg bg-accent/10 px-2 py-1 text-[11px] font-semibold text-accent ring-1 ring-accent/30 hover:bg-accent/20">
-                <MapIcon className="h-3.5 w-3.5" /> 2D
-              </button>
             </div>
             <div className="max-h-[220px] space-y-1.5 overflow-auto">
               {selInter.length === 0 && <p className="text-[11px] text-slate-500">No close contacts detected in this pose.</p>}
@@ -1578,11 +1591,103 @@ function ResultsView({ result, receptorName }) {
           poses, interactions: selInter, rows: [{ name: ligName, affinity: best, mw: props.mw, logp: props.logp, qed: props.qed }],
         }} />
       )}
+
+      {validateOpen && (
+        <Modal onClose={() => setValidateOpen(false)}>
+          <ValidationView poses={poses} nativePdb={nativePdb} nativeSmiles={nativeSmiles}
+            ligandSmiles={result?.ligand_smiles || ligandSmiles} receptorId={receptor?.receptor_id}
+            initialPose={selPose} ligand={ligName} />
+        </Modal>
+      )}
     </div>
   )
 }
 
 function fmt(v) { return v == null ? '—' : (v < 0 ? '−' + Math.abs(v).toFixed(1) : v.toFixed(1)) }
+
+// small per-pose RMSD label above each affinity bar (cognate re-docking only)
+function RmsdBarLabel({ x, y, width, value }) {
+  if (value == null) return null
+  return <text x={x + width / 2} y={y - 4} textAnchor="middle" fontSize="9" fontWeight="600" fill="#5eead4">{value}</text>
+}
+
+// Re-docking validation: pick any pose to see its RMSD + overlay on the co-crystal ligand.
+function ValidationView({ poses, nativePdb, nativeSmiles, ligandSmiles, receptorId, initialPose = 0, ligand }) {
+  const [idx, setIdx] = useState(Math.min(initialPose, (poses?.length || 1) - 1))
+  const [ov, setOv] = useState({ status: 'loading' })
+  const sel = poses[idx] || {}
+  const covalent = !!(sel.covalent && sel.covalent.mode === 'tethered')
+
+  useEffect(() => {
+    let cancel = false
+    if (!sel.complex_id) { setOv({ status: 'error', msg: 'No structure available for this pose.' }); return }
+    setOv({ status: 'loading' })
+    api.validateDocking({ receptor_id: receptorId, complex_id: sel.complex_id, ligand_smiles: ligandSmiles, native_pdb: nativePdb, native_smiles: nativeSmiles })
+      .then((r) => { if (!cancel) setOv({ status: 'ok', data: r }) })
+      .catch((e) => { const m = String(e?.message || e); if (!cancel) setOv({ status: 'error', msg: m === 'ENGINE_OFFLINE' ? 'Engine offline — start the DDS engine.' : m }) })
+    return () => { cancel = true }
+  }, [idx])
+
+  const rmsd = ov.data?.rmsd ?? sel.rmsd_xray
+  return (
+    <div className="flex flex-col">
+      <div className="border-b border-ink-700/60 px-5 py-3 pr-14">
+        <h3 className="text-[14px] font-semibold text-white">Docking validation · re-docking RMSD</h3>
+        <p className="text-[11px] text-slate-500">{ligand} vs co-crystallised ligand · pick a pose to compare</p>
+      </div>
+      <div className="p-4">
+        {/* pose selector — each shows the affinity and RMSD to the crystal ligand */}
+        <div className="mb-3 flex flex-wrap gap-1.5">
+          {poses.map((p, i) => (
+            <button key={i} onClick={() => setIdx(i)}
+              className={`flex flex-col items-start rounded-lg px-2.5 py-1.5 text-left ring-1 transition ${i === idx ? 'bg-accent/15 ring-accent/40' : 'bg-ink-800/60 ring-ink-700/60 hover:bg-ink-700'}`}>
+              <span className={`text-[11px] font-semibold ${i === idx ? 'text-white' : 'text-slate-300'}`}>Pose {p.pose}</span>
+              <span className="text-[9.5px] text-slate-400"><span className="font-mono">{fmt(p.affinity)}</span> · {p.rmsd_xray != null ? <span className="font-mono text-accent">{p.rmsd_xray} Å</span> : '—'}</span>
+            </button>
+          ))}
+        </div>
+
+        {ov.status === 'loading' && (
+          <div className="grid h-[420px] place-items-center text-slate-400">
+            <span className="h-8 w-8 animate-spin rounded-full border-2 border-accent/30 border-t-accent" />
+          </div>
+        )}
+        {ov.status === 'error' && (
+          <div className="grid h-[300px] place-items-center px-8 text-center">
+            <div>
+              <div className="text-[13px] font-medium text-amber">{ov.msg}</div>
+              <div className="mx-auto mt-1 max-w-md text-[11px] leading-relaxed text-slate-500">Validation compares each docked pose with the co-crystallised ligand (cognate re-docking).</div>
+            </div>
+          </div>
+        )}
+        {ov.status === 'ok' && ov.data && (
+          <>
+            <div className="mb-3 flex flex-wrap items-center gap-3">
+              <div className="flex items-baseline gap-2 rounded-xl bg-accent/10 px-4 py-2 ring-1 ring-accent/30">
+                <span className="text-[11px] text-slate-400">Heavy-atom RMSD · Pose {sel.pose}</span>
+                <span className="font-mono text-[18px] font-bold text-accent">{rmsd} Å</span>
+              </div>
+              <span className={`rounded-lg px-2.5 py-1 text-[11px] font-semibold ${rmsd <= 2 ? 'bg-emerald-500/15 text-emerald-400' : 'bg-amber-500/15 text-amber-400'}`}>
+                {rmsd <= 2 ? '✓ reproduces the crystal pose (< 2 Å)' : '⚠ deviates from the crystal pose (> 2 Å)'}
+              </span>
+              <div className="flex items-center gap-3 text-[11px] text-slate-300">
+                <span className="flex items-center gap-1.5"><span className="h-2.5 w-2.5 rounded-full" style={{ background: '#22c55e' }} /> Native (crystal)</span>
+                <span className="flex items-center gap-1.5"><span className="h-2.5 w-2.5 rounded-full" style={{ background: '#e879f9' }} /> Docked</span>
+              </div>
+              <span className="ml-auto text-[10px] text-slate-500">{ov.data.matched_atoms}/{ov.data.n_atoms} atoms · {ov.data.method}</span>
+            </div>
+            <div className="h-[440px] overflow-hidden rounded-xl">
+              <MoleculeViewer pdb={ov.data.overlay_pdb} ligResn="LIG" style="cartoon" showLigand spin={false} />
+            </div>
+            <p className="mt-2 text-[10.5px] leading-relaxed text-slate-500">
+              Receptor (cartoon) with the docked pose (magenta) superimposed on the co-crystallised ligand (green). Use the PNG button at the top-right of the viewer to download.{covalent ? ' Covalent (tethered) pose compared via common-substructure alignment.' : ''}
+            </p>
+          </>
+        )}
+      </div>
+    </div>
+  )
+}
 
 // Covalent summary banner for the docking results header
 function CovalentBanner({ cov }) {

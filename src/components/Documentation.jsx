@@ -77,6 +77,7 @@ export default function DocsModal({ onClose }) {
               <Feat tone="amber" icon={<Flask />} title="Automated preparation" desc="Receptor (waters/ions, pH protonation, chain/cofactor editing) and ligand (3D, protonation) prep." />
               <Feat tone="sky" icon={<Chart />} title="Interaction analysis" desc="Publication-quality 2D and 3D interaction diagrams with PNG / SVG export." />
               <Feat tone="rose" icon={<Beaker />} title="MD-ready exports" desc="One-click, simulation-ready exports for AMBER, CHARMM and GROMACS." />
+              <Feat tone="emerald" icon={<Check />} title="Docking validation" desc="Re-dock a co-crystal ligand and instantly see the RMSD and a 3D overlay of the docked pose on the native crystal structure — downloadable as an image." />
             </div>
             <p className="text-[11.5px] text-slate-400">Additional tools: pose energy-minimization (UFF / MMFF94), optional AI insights, and robust background jobs that survive navigation and refreshes.</p>
           </Section>
@@ -125,6 +126,7 @@ export default function DocsModal({ onClose }) {
               <Card tone="teal" title="Interaction detection">Hydrogen bonds (polar N/O···N/O, 2.4–3.5 Å), salt bridges (opposite charges ≤ 4.0 Å) and hydrophobic contacts (C···C ≤ 4.0 Å) are assigned geometrically from the 3D coordinates.</Card>
               <Card tone="teal" title="Pose cleanup">An optional UFF / MMFF94 energy-minimization relieves steric clashes in the ligand, pocket or whole complex — a light geometric relaxation, not a rigorous MM simulation.</Card>
             </div>
+            <Callout tone="emerald"><b>Validate docking results.</b> When you re-dock a ligand that was co-crystallised with the receptor (cognate re-docking), a <b>“Validate Docking Results”</b> button appears in the results. It computes the heavy-atom <b>RMSD</b> between the docked pose and the experimental ligand, and displays a 3D <b>overlay</b> — the receptor as a cartoon with the docked pose (magenta) superimposed on the native crystal ligand (green) — so you can see the agreement at a glance and download the image. An RMSD below ≈ 2 Å indicates the docking reproduces the crystallographic pose. Validation works for covalent poses too (the tethered bond-formed pose is compared using a common-substructure alignment). It is shown only for cognate re-docking, where an experimental reference pose exists.</Callout>
           </Section>
 
           {/* Covalent */}
@@ -155,6 +157,24 @@ export default function DocsModal({ onClose }) {
               <><b>Dock.</b> Press <b>Run</b> (top bar) or the Dock step button. The calculation runs as a background job — you can navigate away and it keeps going.</>,
               <><b>Analyse &amp; export.</b> In Results, inspect the best affinity, poses and interactions (Off / 3D / 2D), the covalent bond (tethered), minimize if desired, and export a publication-ready report or an MD-ready complex.</>,
             ]} />
+
+            <div className="mt-1 rounded-xl border border-emerald-500/30 bg-emerald-500/[0.05] p-4">
+              <div className="mb-2.5 flex items-center gap-2">
+                <div className="grid h-6 w-6 place-items-center rounded-md bg-emerald-500/15 text-emerald-400"><Link /></div>
+                <span className="text-[13px] font-semibold text-white">Covalent docking — step by step</span>
+              </div>
+              <Steps items={[
+                <><b>Turn on covalent mode (left panel).</b> In the left sidebar, just under the <b>Single / Virtual</b> switch, flip the <b>Covalent docking</b> card to <b>On</b>. The card lights up and shows the current target; when no residue is chosen yet it prompts you to pick one in the Binding Site step.</>,
+                <><b>Open the Binding Site step.</b> Go to step 3 (<b>Binding Site</b>). With covalent on, a <b>Covalent target</b> card appears in the <b>right-hand panel</b>, below the grid-box (Center / Size) controls.</>,
+                <><b>Choose the method (right panel).</b> In the Covalent target card, pick the <b>Method</b>: <b>Geometry-guided</b> (fast — ranks poses by how close the warhead comes to the residue) or <b>Bond-restrained</b> (rigorous — refines the top pose so the covalent bond is formed explicitly).</>,
+                <><b>Select the reactive residue (right panel).</b> Choose the target nucleophile from the <b>Reactive residue</b> dropdown. DDS auto-lists the Cys / Ser / Thr / Lys / Tyr / His residues that fall inside the search box, nearest the box centre first (e.g. <code className="rounded bg-ink-900 px-1 text-[11px]">CYS145 · Sγ</code>). The chosen residue is highlighted in the 3D workspace with its reactive atom labelled.</>,
+                <><b>Confirm the warhead (right panel).</b> DDS perceives the ligand's electrophilic warhead automatically (acrylamide, haloacetamide, vinyl sulfone, epoxide, nitrile, boronic acid…). Accept the detected warhead, or override it from the <b>Warhead</b> dropdown. In geometry mode, set the <b>Max bond distance</b> slider (default 3.5 Å) — the cutoff within which a pose counts as covalently compatible; Bond-restrained mode uses the ideal covalent bond length automatically.</>,
+                <><b>Run.</b> Press <b>Run</b> — the button now reads <b>Run Covalent Docking</b>. Docking runs as a background job as usual.</>,
+                <><b>Read the results.</b> The recommended pose shows the covalent bond drawn in 3D (warhead → residue) with a covalent badge (<i>residue · warhead · distance</i>). In Bond-restrained mode the bond is formed at its ideal length and a “warhead pulled X Å” value indicates how far the pose had to move (small = already reactive). The 2D map shows the covalent bond for the tethered pose. Validate and export as usual.</>,
+              ]} />
+              <p className="mt-2 text-[11px] leading-relaxed text-slate-400">The identical workflow applies to <b>covalent virtual screening</b>: turn covalent on, set the target residue and method once, switch to <b>Virtual</b> mode and screen your library — every compound is warhead-perceived and evaluated against the same residue.</p>
+            </div>
+
             <Callout tone="violet"><b>Virtual screening.</b> Switch to <b>Virtual</b> mode in the sidebar, paste a SMILES library in the Library step, and Screen. Hits are ranked by affinity (and covalent reach, if covalent is on). Use the "New Run" button in the top bar to clear the workspace and start over — running jobs continue in the Jobs panel.</Callout>
           </Section>
 
@@ -270,6 +290,7 @@ function Layers(p) { return Ic(p, <><path d="M12 3l9 5-9 5-9-5z" /><path d="M3 1
 function Link(p) { return Ic(p, <><path d="M9 15l6-6M10.5 6.5l1-1a4 4 0 015.66 5.66l-1.5 1.5M13.5 17.5l-1 1a4 4 0 01-5.66-5.66l1.5-1.5" /></>) }
 function Flask(p) { return Ic(p, <><path d="M9 3h6M10 3v6l-5 8a2 2 0 002 3h10a2 2 0 002-3l-5-8V3" /><path d="M7 14h10" /></>) }
 function Play(p) { return Ic(p, <><path d="M7 4l13 8-13 8z" fill="currentColor" stroke="none" /></>) }
+function Check(p) { return Ic(p, <><path d="M20 6L9 17l-5-5" /></>) }
 function Chart(p) { return Ic(p, <><path d="M4 20V10M10 20V4M16 20v-7M22 20H2" /></>) }
 function Beaker(p) { return Ic(p, <><path d="M6 3h12M8 3v6l-4 9a1.5 1.5 0 001.4 2h13.2a1.5 1.5 0 001.4-2l-4-9V3" /><path d="M6.5 15h11" /></>) }
 function Spark(p) { return Ic(p, <><path d="M12 3l1.8 5.2L19 10l-5.2 1.8L12 17l-1.8-5.2L5 10l5.2-1.8z" fill="currentColor" stroke="none" /></>) }

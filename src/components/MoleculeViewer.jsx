@@ -262,6 +262,13 @@ function applyStyle(viewer, style, showLigand, ligResn) {
     })
   }
 
+  // native (co-crystal) ligand in a validation overlay — same ball-and-stick style
+  // as the docked ligand, only a different colour (green vs magenta)
+  viewer.setStyle({ resn: 'NAT' }, {
+    stick: { radius: 0.22, colorscheme: 'greenCarbon' },
+    sphere: { scale: 0.28, colorscheme: 'greenCarbon' },
+  })
+
   // retained crystallographic waters — small red spheres (otherwise invisible under cartoon)
   viewer.setStyle({ resn: ['HOH', 'WAT', 'DOD', 'H2O'] }, { sphere: { radius: 0.32, color: '#f87171' } })
   // retained ions — larger element-coloured spheres

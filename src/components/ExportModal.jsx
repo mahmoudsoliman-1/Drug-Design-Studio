@@ -51,6 +51,7 @@ export default function ExportModal({ onClose, payload }) {
 
   // structure options
   const [struct, setStruct] = useState({ complex: true, receptor: false, ligand: false })
+  const [structPose, setStructPose] = useState(String(meta.pose ?? (meta.poses?.[0]?.pose ?? 1))) // pose number | '__all__'
 
   // md options
   const [engine, setEngine] = useState('amber')
@@ -71,7 +72,7 @@ export default function ExportModal({ onClose, payload }) {
         if (reportFmt === 'print') await openPrint(html)
         else await downloadText(`${meta.target.replace(/\s+/g, '_')}_DDS_report.html`, html, 'text/html')
       } else if (kind === 'structures') {
-        await exportStructures(meta, struct)
+        await exportStructures(meta, struct, structPose)
       } else if (kind === 'md') {
         await exportMdPackage(engine, meta, md, mdPick)
       }
@@ -146,18 +147,35 @@ export default function ExportModal({ onClose, payload }) {
             )}
 
             {tab === 'structures' && meta.mode !== 'screen' && (
-              <Section title="Docked structures" desc="Coordinate files for the top-scoring pose of the docked complex.">
+              <Section title="Docked structures" desc="Coordinate files for a docked pose — pick one pose or export them all.">
+                <div className="mb-3">
+                  <div className="mb-1 text-[11px] text-slate-400">Pose to export</div>
+                  <select value={structPose} onChange={(e) => setStructPose(e.target.value)}
+                    className="w-full rounded-md bg-ink-900 px-2.5 py-1.5 text-[12px] text-slate-200 outline-none ring-1 ring-ink-700 focus:ring-accent/60">
+                    {(meta.poses || []).map((p, i) => (
+                      <option key={p.pose} value={String(p.pose)}>
+                        Pose {p.pose} · {p.affinity} kcal/mol{p.rmsd_xray != null ? ` · RMSD ${p.rmsd_xray} Å` : ''}{i === 0 ? ' (best)' : ''}
+                      </option>
+                    ))}
+                    <option value="__all__">All poses (.zip)</option>
+                  </select>
+                </div>
                 <div className="space-y-2">
-                  <FileCheck label="Docked complex (receptor + ligand)" sub={`${safe(meta.target)}_complex.pdb`} checked={struct.complex} onClick={() => setStruct((s) => ({ ...s, complex: !s.complex }))} />
+                  <FileCheck label="Docked complex (receptor + ligand)" sub="complex.pdb" checked={struct.complex} onClick={() => setStruct((s) => ({ ...s, complex: !s.complex }))} />
                   <FileCheck label="Receptor only" sub="receptor.pdb" checked={struct.receptor} onClick={() => setStruct((s) => ({ ...s, receptor: !s.receptor }))} />
                   <FileCheck label="Ligand only" sub="ligand.pdb" checked={struct.ligand} onClick={() => setStruct((s) => ({ ...s, ligand: !s.ligand }))} />
                 </div>
-                <Note>Real docked pose from your run. Each PDB carries REMARK provenance (engine, scoring, affinity).</Note>
+                <Note>{structPose === '__all__' ? 'One folder per pose inside a single .zip.' : 'Real docked pose from your run.'} Each PDB carries REMARK provenance (engine, scoring, affinity).</Note>
               </Section>
             )}
 
             {tab === 'md' && (
               <Section title="MD-ready system" desc="Generates a self-contained preparation package (.zip) for your simulation engine.">
+                {meta.mode !== 'screen' && (
+                  <div className="mb-3 rounded-lg bg-ink-800/50 px-3 py-2 text-[11.5px] leading-relaxed text-slate-300">
+                    Preparing MD for <span className="font-semibold text-white">Pose {meta.pose}</span> — the pose currently selected in Results{meta.affinity != null ? ` (${meta.affinity} kcal/mol)` : ''}. Select a different pose there to prepare that one.
+                  </div>
+                )}
                 {meta.mode === 'screen' && (
                   <div className="mb-3">
                     <div className="mb-1 text-[11px] text-slate-400">Prepare for</div>
@@ -214,7 +232,7 @@ export default function ExportModal({ onClose, payload }) {
               {tab === 'report' && (reportFmt === 'print' ? 'Opens a print view — save as PDF' : 'Downloads a self-contained .html')}
               {tab === 'structures' && (meta.mode === 'screen'
                 ? `Top ${Math.min(5, (meta.screenRows || []).length)} docked complexes${struct.receptor ? ' + receptor' : ''}`
-                : `${Object.values(struct).filter(Boolean).length} file(s) selected`)}
+                : `${structPose === '__all__' ? `All ${(meta.poses || []).length} poses (.zip)` : `Pose ${structPose}`} · ${Object.values(struct).filter(Boolean).length} file type(s)`)}
               {tab === 'md' && `${MD_ENGINES[engine].label} package (.zip)${meta.mode === 'screen' ? (mdPick === '__top5__' ? ' · top 5' : mdPick === '__top__' ? ' · top hit' : ` · ${mdPick}`) : ''}`}
             </div>
             <button onClick={() => run(tab)} disabled={!!busy}
@@ -324,7 +342,7 @@ function pdbHeader(meta, what, extra = {}) {
 const strip = (pdb) => pdb.replace(/END\s*$/i, '').trimEnd()
 const wait = (ms) => new Promise((r) => setTimeout(r, ms))
 
-async function exportStructures(meta, struct) {
+async function exportStructures(meta, struct, structPose = '__top__') {
   if (meta.mode === 'screen') {
     const rows = (meta.screenRows || []).filter((r) => r.complex_id).slice(0, 5)
     if (!rows.length) throw new Error('no docked complexes available — re-run the screen')
@@ -343,23 +361,47 @@ async function exportStructures(meta, struct) {
     return
   }
 
-  // single docking — use the real docked complex from the run
-  const pdb = meta.complex_pdb
-  if (!pdb) throw new Error('no docked complex available')
-  const lines = pdb.split('\n')
+  // single docking — export a chosen pose (or all poses) from the real docked run
+  const poses = meta.poses || []
   const isProtein = (l) => l.startsWith('ATOM')
   const isLigand = (l) => l.startsWith('HETATM') && l.slice(17, 20).trim() === 'LIG'
-  const base = `${safe(meta.target)}_${safe(meta.ligand)}`
-  if (struct.complex) {
-    await downloadText(`${base}_complex.pdb`, pdbHeader(meta, 'DOCKED COMPLEX (receptor + ligand)') +
-      lines.filter((l) => isProtein(l) || isLigand(l) || l.startsWith('TER')).join('\n') + '\nEND\n', 'chemical/x-pdb')
+
+  async function getPdb(p) {
+    if (p?.complex_pdb) return p.complex_pdb
+    if (p?.complex_id) return (await api.getComplex(p.complex_id)).complex_pdb
+    return null
   }
-  if (struct.receptor) {
-    await downloadText(`${base}_receptor.pdb`, pdbHeader(meta, 'RECEPTOR') +
-      lines.filter((l) => isProtein(l) || l.startsWith('TER')).join('\n') + '\nEND\n', 'chemical/x-pdb')
+  // returns [[filename, content], ...] for the selected file types of one pose
+  function poseFiles(pdb, aff) {
+    const lines = pdb.split('\n')
+    const m = { ...meta, affinity: aff }
+    const f = []
+    if (struct.complex) f.push(['complex.pdb', pdbHeader(m, 'DOCKED COMPLEX (receptor + ligand)') + lines.filter((l) => isProtein(l) || isLigand(l) || l.startsWith('TER')).join('\n') + '\nEND\n'])
+    if (struct.receptor) f.push(['receptor.pdb', pdbHeader(m, 'RECEPTOR') + lines.filter((l) => isProtein(l) || l.startsWith('TER')).join('\n') + '\nEND\n'])
+    if (struct.ligand) f.push(['ligand.pdb', pdbHeader(m, 'LIGAND') + lines.filter(isLigand).join('\n') + '\nEND\n'])
+    return f
   }
-  if (struct.ligand) {
-    await downloadText(`${base}_ligand.pdb`, pdbHeader(meta, 'LIGAND') + lines.filter(isLigand).join('\n') + '\nEND\n', 'chemical/x-pdb')
+
+  if (structPose === '__all__') {
+    if (!poses.length) throw new Error('no poses available')
+    const zip = new JSZip()
+    for (const p of poses) {
+      const pdb = await getPdb(p)
+      if (!pdb) continue
+      const folder = zip.folder(`pose_${p.pose}`)
+      for (const [name, content] of poseFiles(pdb, p.affinity)) folder.file(name, content)
+    }
+    await downloadBlob(`${safe(meta.target)}_${safe(meta.ligand)}_all_poses.zip`, await zip.generateAsync({ type: 'blob' }))
+    return
+  }
+
+  const pose = poses.find((p) => String(p.pose) === String(structPose)) || { complex_pdb: meta.complex_pdb, pose: meta.pose, affinity: meta.affinity }
+  const pdb = (await getPdb(pose)) || meta.complex_pdb
+  if (!pdb) throw new Error('no docked complex available')
+  const base = `${safe(meta.target)}_${safe(meta.ligand)}_pose${pose.pose}`
+  for (const [name, content] of poseFiles(pdb, pose.affinity)) {
+    await downloadText(`${base}_${name}`, content, 'chemical/x-pdb')
+    await wait(180)
   }
 }
 
@@ -674,11 +716,12 @@ function buildReportHTML(meta, sections) {
     </div>
     ${bar ? `<h2>Binding affinity by pose</h2>${bar}` : ''}` : ''
 
+  const hasXray = poses.some((p) => p.rmsd_xray != null)
   const posesTbl = sections.poses && poses.length ? `
     <h2>Ranked poses</h2>
-    <table><thead><tr><th>Pose</th><th>Affinity (kcal/mol)</th><th>RMSD l.b.</th><th>RMSD u.b.</th></tr></thead><tbody>
-    ${poses.map((p) => `<tr><td>${p.pose}</td><td class="${p.pose === 1 ? 'best' : ''}">${p.affinity}</td><td>${p.rmsd_lb ?? '—'}</td><td>${p.rmsd_ub ?? '—'}</td></tr>`).join('')}
-    </tbody></table>` : ''
+    <table><thead><tr><th>Pose</th><th>Affinity (kcal/mol)</th><th>RMSD l.b.</th><th>RMSD u.b.</th>${hasXray ? '<th>RMSD to X-ray (&Aring;)</th>' : ''}</tr></thead><tbody>
+    ${poses.map((p) => `<tr><td>${p.pose}</td><td class="${p.pose === 1 ? 'best' : ''}">${p.affinity}</td><td>${p.rmsd_lb ?? '—'}</td><td>${p.rmsd_ub ?? '—'}</td>${hasXray ? `<td>${p.rmsd_xray ?? '—'}</td>` : ''}</tr>`).join('')}
+    </tbody></table>${hasXray ? '<p style="font-size:11px;color:#64748b;margin-top:4px">RMSD to X-ray: heavy-atom deviation of each pose from the co-crystallised ligand (cognate re-docking validation); RMSD l.b./u.b. are Vina&rsquo;s inter-mode bounds.</p>' : ''}` : ''
 
   const interTbl = sections.interactions && inter.length ? `
     <h2>Key interactions</h2>
