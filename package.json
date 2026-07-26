@@ -1,7 +1,7 @@
 {
   "name": "vinadock",
   "private": true,
-  "version": "0.1.0",
+  "version": "2.0.0",
   "type": "module",
   "scripts": {
     "dev": "vite",
@@ -10,6 +10,7 @@
   },
   "dependencies": {
     "3dmol": "^2.4.0",
+    "cytoscape": "^3.34.0",
     "jszip": "^3.10.1",
     "react": "^18.3.1",
     "react-dom": "^18.3.1",

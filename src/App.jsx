@@ -3,7 +3,6 @@ import MoleculeViewer from './components/MoleculeViewer.jsx'
 import InteractionMap2D from './components/InteractionMap2D.jsx'
 import ExportModal from './components/ExportModal.jsx'
 import Ligand2D from './components/Ligand2D.jsx'
-import AgreementGate, { AGREEMENT_VERSION } from './components/Agreement.jsx'
 import DocsModal, { DOC_VERSION } from './components/Documentation.jsx'
 import { saveFile } from './download.js'
 import { LIBRARY, ScreeningLibraryPanel, LibraryCenter, ScreeningResults } from './components/VirtualScreening.jsx'
@@ -67,10 +66,10 @@ const COMP_COLOR = { protein: '#2dd4bf', nucleic: '#a78bfa', ligand: '#f472b6', 
 
 const DEFAULT_SMILES = 'CC(C)Cc1ccc(cc1)C(C)C(=O)Nc1ncccn1'
 
-export default function App() {
-  // null = still checking; true = accepted; false = show the gate. localStorage is a fast
-  // optimistic cache; the engine's on-disk marker is the durable, OS-independent source of truth.
-  const [agreed, setAgreed] = useState(() => { try { return localStorage.getItem('dds_agreed') === AGREEMENT_VERSION ? true : null } catch { return null } })
+// The docking & virtual-screening module. Rendered by the shell (Shell.jsx) once the
+// licence is accepted; `onSwitchModules` returns the user to the module hub while this
+// module — and any running engine job — stays alive in the background.
+export default function DockingModule({ onSwitchModules, handoff, onHandoffConsumed }) {
   const [aiOpen, setAiOpen] = useState(true) // AI Insights open by default; user can close per session
   const [mode, setMode] = useState('single') // 'single' | 'screen'
   const [active, setActive] = useState('receptor')
@@ -127,28 +126,6 @@ export default function App() {
     let ok = true
     api.health().then(() => ok && setEngine('online')).catch(() => ok && setEngine('offline'))
     if (activeRef.current) setRunning(true)
-    return () => { ok = false }
-  }, [])
-
-  // reconcile the licence agreement with the engine's on-disk marker (durable on mac & windows)
-  useEffect(() => {
-    let ok = true
-    api.getAgreement().then((r) => {
-      if (!ok) return
-      if (r.agreed_version === AGREEMENT_VERSION) {
-        setAgreed(true)
-        try { localStorage.setItem('dds_agreed', AGREEMENT_VERSION) } catch { /* ignore */ }
-      } else {
-        // engine hasn't recorded it; if this browser already had it, migrate — else show the gate
-        setAgreed((prev) => {
-          if (prev === true) { api.setAgreement(AGREEMENT_VERSION).catch(() => {}); return true }
-          return false
-        })
-      }
-    }).catch(() => {
-      // engine unreachable — fall back to the localStorage cache only
-      if (ok) setAgreed((prev) => (prev === true ? true : false))
-    })
     return () => { ok = false }
   }, [])
 
@@ -282,6 +259,16 @@ export default function App() {
       setCleared(false); setRemovedComp([]); setCovResidue(null); setCovResidues([])
     } catch (e) { setErrorMsg(engErr(e)) } finally { setBusy('') }
   }
+  // inbound handoff from another module (e.g. network pharmacology → dock a hub gene):
+  // jump to the Receptor step and prefetch the chosen PDB (box auto-centres on its
+  // co-crystallised ligand via the engine's receptor prep).
+  useEffect(() => {
+    if (!handoff?.pdbId) return
+    setMode('single'); setActive('receptor')
+    loadReceptorById(handoff.pdbId)
+    onHandoffConsumed && onHandoffConsumed()
+  }, [handoff])
+
   async function loadReceptorFile(file) {
     setBusy('receptor'); setErrorMsg('')
     try {
@@ -387,19 +374,6 @@ export default function App() {
     } catch (e) { setErrorMsg(engErr(e)); setRunning(false) }
   }
 
-  if (agreed === null) {
-    return <div className="grid h-full w-full place-items-center bg-ink-950">
-      <span className="h-6 w-6 animate-spin rounded-full border-2 border-accent/30 border-t-accent" />
-    </div>
-  }
-  if (!agreed) {
-    return <AgreementGate onAgree={() => {
-      try { localStorage.setItem('dds_agreed', AGREEMENT_VERSION) } catch { /* ignore */ }
-      api.setAgreement(AGREEMENT_VERSION).catch(() => {})
-      setAgreed(true)
-    }} />
-  }
-
   return (
     <div className="flex h-full w-full bg-ink-950 text-slate-200">
       <Sidebar active={active} setActive={setActive} hasResults={hasResults}
@@ -415,7 +389,8 @@ export default function App() {
           bestAffinity={hasResults ? bestAffinity : null} receptorName={receptor?.name}
           ligandCount={isScreen ? parseSmilesLibrary(screenSmiles).length : 1} scoring={scoring}
           activeJob={activeJob} runningCount={jobs.filter((j) => j.status === 'running').length}
-          onOpenJobs={() => setJobsOpen(true)} onClear={clearWorkspace} hasReceptor={!!receptor || hasResults} />
+          onOpenJobs={() => setJobsOpen(true)} onClear={clearWorkspace} hasReceptor={!!receptor || hasResults}
+          onSwitchModules={onSwitchModules} />
 
         {engine === 'offline' && <EngineBanner />}
         {errorMsg && <ErrorBar msg={errorMsg} onClose={() => setErrorMsg('')} />}
@@ -742,7 +717,7 @@ function ModeTab({ active, onClick, icon: Icon, label, sub }) {
 /* ------------------------------------------------------------------ */
 /*  Top bar                                                            */
 /* ------------------------------------------------------------------ */
-function TopBar({ onRun, running, bestAffinity, isScreen, covalent, receptorName, ligandCount, scoring, activeJob, runningCount, onOpenJobs, onClear, hasReceptor }) {
+function TopBar({ onRun, running, bestAffinity, isScreen, covalent, receptorName, ligandCount, scoring, activeJob, runningCount, onOpenJobs, onClear, hasReceptor, onSwitchModules }) {
   return (
     <header className="flex items-center gap-4 border-b border-ink-700/60 bg-ink-900/40 px-5 py-3">
       <div className="flex items-center gap-2.5">
@@ -782,6 +757,12 @@ function TopBar({ onRun, running, bestAffinity, isScreen, covalent, receptorName
       )}
 
       <div className="ml-auto flex items-center gap-2">
+        {onSwitchModules && (
+          <button onClick={onSwitchModules} title="Switch modules — running jobs keep going"
+            className="flex items-center gap-2 rounded-lg bg-violet/15 px-3 py-2 text-[13px] font-semibold text-violet ring-1 ring-violet/40 transition hover:bg-violet/25">
+            <GridIcon className="h-4 w-4" /> Switch Module
+          </button>
+        )}
         {hasReceptor && (
           <button onClick={onClear} title="Clear workspace and start a new run, background jobs keep running — track them in Jobs."
             className="flex items-center gap-2 rounded-lg bg-ink-800/70 px-3 py-2 text-[13px] font-medium text-slate-300 transition hover:bg-ink-700 hover:text-white">
@@ -1743,6 +1724,7 @@ function Modal({ children, onClose }) {
 /*  Cite DDS                                                          */
 /* ------------------------------------------------------------------ */
 const CITATION = 'Mahmoud E Soliman, Drug Design Studio (DDS): An all-in-one Cross-Platform for Covalent/Non-Covalent Docking, Covalent Binders Virtual Screening and Protein-Ligand interaction analysis - Under Review'
+const CITATION2 = 'Mahmoud E Soliman, Drug Design Suite (DDS) 2.0: A Unified Platform for Network Pharmacology Integrated with Docking and Virtual Screening Workflow for Covalent/Non-Covalent Binders - Under Review'
 const CITATION_BIBTEX = `@article{soliman2026dds,
   author  = {Soliman, Mahmoud E.},
   title   = {Drug Design Studio (DDS): An All-in-One Cross-Platform for Covalent/Non-Covalent Docking, Covalent Binders Virtual Screening and Protein-Ligand Interaction Analysis},
@@ -1778,11 +1760,12 @@ function CiteModal({ onClose }) {
         <div className="space-y-4 p-6">
           <div>
             <div className="mb-1.5 flex items-center justify-between">
-              <span className="text-[11px] font-semibold uppercase tracking-wide text-slate-500">Reference</span>
-              <CopyBtn active={copied === 'ref'} onClick={() => copy(CITATION, 'ref')} />
+              <span className="text-[11px] font-semibold uppercase tracking-wide text-slate-500">References</span>
+              <CopyBtn active={copied === 'ref'} onClick={() => copy(`${CITATION}\n\n${CITATION2}`, 'ref')} />
             </div>
-            <div className="rounded-xl bg-ink-900/70 p-4 text-[13px] leading-relaxed text-slate-200 ring-1 ring-ink-700/60">
-              {CITATION}
+            <div className="space-y-2.5 rounded-xl bg-ink-900/70 p-4 text-[13px] leading-relaxed text-slate-200 ring-1 ring-ink-700/60">
+              <div className="flex gap-2"><span className="font-semibold text-slate-500">1.</span><span>{CITATION}</span></div>
+              <div className="flex gap-2"><span className="font-semibold text-slate-500">2.</span><span>{CITATION2}</span></div>
             </div>
           </div>
 
@@ -1923,6 +1906,7 @@ function MapIcon(p) { return I(p, <><circle cx="12" cy="12" r="2.2" /><circle cx
 function CloseIcon(p) { return I(p, <><path d="M6 6l12 12M18 6L6 18" /></>) }
 function TargetIcon(p) { return I(p, <><circle cx="12" cy="12" r="8" /><circle cx="12" cy="12" r="3.5" /><path d="M12 2v3M12 19v3M2 12h3M19 12h3" /></>) }
 function LayersIcon(p) { return I(p, <><path d="M12 3l9 5-9 5-9-5z" /><path d="M3 13l9 5 9-5M3 17l9 5 9-5" /></>) }
+function GridIcon(p) { return I(p, <><rect x="3" y="3" width="7" height="7" rx="1.5" /><rect x="14" y="3" width="7" height="7" rx="1.5" /><rect x="3" y="14" width="7" height="7" rx="1.5" /><rect x="14" y="14" width="7" height="7" rx="1.5" /></>) }
 function QuoteIcon(p) { return I(p, <><path d="M7 7H4a1 1 0 00-1 1v4a1 1 0 001 1h2v3a1 1 0 01-1 1H4M17 7h-3a1 1 0 00-1 1v4a1 1 0 001 1h2v3a1 1 0 01-1 1h-1" /></>) }
 function CopyIcon(p) { return I(p, <><rect x="9" y="9" width="12" height="12" rx="2" /><path d="M5 15V5a2 2 0 012-2h8" /></>) }
 function TrashIcon(p) { return I(p, <><path d="M4 7h16M10 11v6M14 11v6M5 7l1 13a2 2 0 002 2h8a2 2 0 002-2l1-13M9 7V4a1 1 0 011-1h4a1 1 0 011 1v3" /></>) }

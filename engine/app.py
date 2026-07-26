@@ -18,7 +18,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from typing import Optional, List
 
-from ddsengine import prep, dock, interactions, analysis, minimize, covalent, validate as validate_mod
+from ddsengine import prep, dock, interactions, analysis, minimize, covalent, validate as validate_mod, netpharm, pdbmap
 
 app = FastAPI(title="Drug Design Studio Engine", version="1.0.0")
 app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"])
@@ -138,6 +138,50 @@ class AgreementReq(BaseModel):
     version: str
 
 
+class DiseaseTargetsReq(BaseModel):
+    disease: str = ""
+    sources: List[str] = ["opentargets"]
+    uploaded: str = ""
+    limit: int = 2000
+
+
+class CompoundTargetsReq(BaseModel):
+    query: str = ""
+    is_smiles: bool = False
+    sources: List[str] = ["dgidb", "chembl"]
+    uploaded: str = ""
+    limit: int = 400
+
+
+class MultiCompoundReq(BaseModel):
+    compounds: List[str] = []
+    is_smiles: bool = False
+    sources: List[str] = ["dgidb", "chembl"]
+    uploaded: str = ""
+    limit: int = 400
+
+
+class MultiDiseaseReq(BaseModel):
+    diseases: List[str] = []
+    sources: List[str] = ["opentargets"]
+    uploaded: str = ""
+    limit: int = 2000
+
+
+class NetPharmRunReq(BaseModel):
+    disease_genes: List[str] = []
+    compound_genes: List[str] = []
+    confidence: float = 0.4
+    centrality: str = "mcc"
+    topn: int = 10
+    libraries: List[str] = ["GO_BP", "KEGG"]
+    label: Optional[str] = None
+
+
+class HubStructuresReq(BaseModel):
+    genes: List[str] = []
+
+
 # --------------------------- AI (Groq / Llama) ---------------------------
 GROQ_URL = "https://api.groq.com/openai/v1/chat/completions"
 GROQ_MODEL = os.environ.get("DDS_AI_MODEL", "llama-3.3-70b-versatile")
@@ -254,6 +298,8 @@ def _summary(job):
         if job["kind"] == "dock":
             s["best_affinity"] = r.get("best_affinity")
             s["ligand"] = (r.get("properties") or {}).get("formula")
+        elif job["kind"] == "netpharm":
+            s["counts"] = r.get("counts")
         else:
             rows = r.get("results", [])
             s["best_affinity"] = rows[0]["affinity"] if rows else None
@@ -513,6 +559,26 @@ def _run_screen(jid):
     _save_job(job)
 
 
+def _run_netpharm(jid):
+    job = JOBS[jid]
+    req = job["request"]
+    try:
+        def progress(done, total, msg):
+            job["progress"] = {"done": done, "total": total, "msg": msg}
+            _save_job(job)
+
+        job["result"] = netpharm.run_pipeline(
+            req.get("disease_genes", []), req.get("compound_genes", []),
+            confidence=req.get("confidence", 0.7), centrality=req.get("centrality", "degree"),
+            topn=req.get("topn", 10), libraries=tuple(req.get("libraries", ["GO_BP", "KEGG"])),
+            progress=progress)
+        job["status"] = "done"
+    except Exception as e:
+        job["status"] = "error"
+        job["error"] = str(e)[:300]
+    _save_job(job)
+
+
 # --------------------------- receptor helpers ---------------------------
 def _store_receptor(pdb_text, keep_waters=False, keep_ions=False, remove=None, rid=None, ph=7.4):
     rec_pdbqt, protein_pdb, display_pdb, ligand_pdb, meta = prep.prepare_receptor(
@@ -680,6 +746,41 @@ def submit_dock(req: DockReq):
     label = req.label or "Docking"
     job = _new_job("dock", label, req.dict(), req.receptor_id)
     EXECUTOR.submit(_run_dock, job["job_id"])
+    return {"job_id": job["job_id"]}
+
+
+@app.post("/api/netpharm/disease-targets")
+def netpharm_disease_targets(req: DiseaseTargetsReq):
+    return netpharm.disease_targets(req.disease, tuple(req.sources), req.uploaded, req.limit)
+
+
+@app.post("/api/netpharm/compound-targets")
+def netpharm_compound_targets(req: CompoundTargetsReq):
+    return netpharm.compound_targets(req.query, req.is_smiles, tuple(req.sources), req.uploaded, req.limit)
+
+
+@app.post("/api/netpharm/compound-targets-multi")
+def netpharm_compound_targets_multi(req: MultiCompoundReq):
+    return netpharm.compound_targets_multi(req.compounds, req.is_smiles, tuple(req.sources), req.uploaded, req.limit)
+
+
+@app.post("/api/netpharm/disease-targets-multi")
+def netpharm_disease_targets_multi(req: MultiDiseaseReq):
+    return netpharm.disease_targets_multi(req.diseases, tuple(req.sources), req.uploaded, req.limit)
+
+
+@app.post("/api/netpharm/hub-structures")
+def netpharm_hub_structures(req: HubStructuresReq):
+    return pdbmap.hub_structures(req.genes)
+
+
+@app.post("/api/netpharm/run")
+def submit_netpharm(req: NetPharmRunReq):
+    label = req.label or "Network pharmacology"
+    job = _new_job("netpharm", label, req.dict(), None)
+    job["progress"] = {"done": 0, "total": 4}
+    _save_job(job)
+    EXECUTOR.submit(_run_netpharm, job["job_id"])
     return {"job_id": job["job_id"]}
 
 

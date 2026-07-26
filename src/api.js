@@ -135,3 +135,47 @@ export function getJob(id) {
 export function deleteJob(id) {
   return call(`/api/job/${id}`, { method: 'DELETE' })
 }
+
+// --------------------------- network pharmacology ---------------------------
+function post(path, body) {
+  return call(path, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+  })
+}
+
+export function netpharmDiseaseTargets({ disease, sources, uploaded, limit }) {
+  return post('/api/netpharm/disease-targets', {
+    disease: disease || '', sources: sources || ['opentargets'],
+    uploaded: uploaded || '', limit: limit || 2000,
+  })
+}
+
+export function netpharmCompoundTargets({ query, isSmiles, sources, uploaded, limit }) {
+  return post('/api/netpharm/compound-targets', {
+    query: query || '', is_smiles: !!isSmiles, sources: sources || ['dgidb', 'chembl'],
+    uploaded: uploaded || '', limit: limit || 400,
+  })
+}
+
+export function netpharmDiseaseTargetsMulti({ diseases, sources, uploaded, limit }) {
+  return post('/api/netpharm/disease-targets-multi', {
+    diseases: diseases || [], sources: sources || ['opentargets'],
+    uploaded: uploaded || '', limit: limit || 2000,
+  })
+}
+
+export function netpharmCompoundTargetsMulti({ compounds, isSmiles, sources, uploaded, limit }) {
+  return post('/api/netpharm/compound-targets-multi', {
+    compounds: compounds || [], is_smiles: !!isSmiles, sources: sources || ['dgidb', 'chembl'],
+    uploaded: uploaded || '', limit: limit || 400,
+  })
+}
+
+export function netpharmRun(payload) {
+  return post('/api/netpharm/run', payload)
+}
+
+export function netpharmHubStructures(genes) {
+  return post('/api/netpharm/hub-structures', { genes })
+}
