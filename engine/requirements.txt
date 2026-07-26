@@ -12,6 +12,7 @@ httptools==0.8.0
 idna==3.18
 importlib_metadata==8.7.1
 meeko==0.7.1
+networkx==3.2.1
 numpy==2.0.2
 openbabel-wheel==3.1.1.23
 packaging==26.2
