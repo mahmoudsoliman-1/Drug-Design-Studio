@@ -51,7 +51,7 @@ export default function ModuleHub({ modules, onOpen, runningCount = 0 }) {
           <span className="text-[12px] text-slate-400">Further ahead — ADMET · pharmacophore · MD preparation</span>
         </div>
 
-        <div className="mt-auto pt-6 text-right text-[10px] text-slate-600">DDS v1.0.0</div>
+        <div className="mt-auto pt-6 text-right text-[10px] text-slate-600">DDS v3.0.0</div>
       </div>
     </div>
   )
