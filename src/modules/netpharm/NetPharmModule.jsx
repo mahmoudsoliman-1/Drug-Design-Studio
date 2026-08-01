@@ -29,8 +29,8 @@ const LIBS = [['GO_BP', 'GO · Biological process'], ['GO_MF', 'GO · Molecular 
 
 // keep genes at/above the score cutoff (unscored upload/CTD genes always pass) and,
 // when covalent-only is on, only covalent-targetable ones
-function filterGenes(list, minScore, covOnly) {
-  return (list || []).filter((g) => (!covOnly || g.covalent) && (g.score == null || g.score >= minScore))
+function filterGenes(list, minScore, covOnly, mutOnly) {
+  return (list || []).filter((g) => (!covOnly || g.covalent) && (!mutOnly || g.mutation) && (g.score == null || g.score >= minScore))
 }
 function fmtScore(s) { return s == null ? '·' : (s <= 1 ? s.toFixed(2) : s.toFixed(1)) }
 
@@ -66,6 +66,7 @@ export default function NetPharmModule({ onSwitchModules, onHandoff }) {
   // ranking / covalent selection filters
   const [dMinScore, setDMinScore] = useState(0)
   const [dCovOnly, setDCovOnly] = useState(false)
+  const [dMutOnly, setDMutOnly] = useState(false)
   const [cMinScore, setCMinScore] = useState(0)
   const [cCovOnly, setCCovOnly] = useState(false)
 
@@ -100,8 +101,8 @@ export default function NetPharmModule({ onSwitchModules, onHandoff }) {
   }, [activeJobId])
 
   // apply the ranking cutoff + covalent filter, then derive the effective gene sets
-  const dEffective = useMemo(() => filterGenes(dResult?.genes, dMinScore, dCovOnly), [dResult, dMinScore, dCovOnly])
-  const cEffective = useMemo(() => filterGenes(cResult?.genes, cMinScore, cCovOnly), [cResult, cMinScore, cCovOnly])
+  const dEffective = useMemo(() => filterGenes(dResult?.genes, dMinScore, dCovOnly, dMutOnly), [dResult, dMinScore, dCovOnly, dMutOnly])
+  const cEffective = useMemo(() => filterGenes(cResult?.genes, cMinScore, cCovOnly, false), [cResult, cMinScore, cCovOnly])
   const dSymbols = useMemo(() => dEffective.map((g) => g.gene), [dEffective])
   const cSymbols = useMemo(() => cEffective.map((g) => g.gene), [cEffective])
 
@@ -110,6 +111,11 @@ export default function NetPharmModule({ onSwitchModules, onHandoff }) {
     for (const g of [...(dResult?.genes || []), ...(cResult?.genes || [])]) if (g.covalent) s.add(g.gene)
     return s
   }, [dResult, cResult])
+  const mutSet = useMemo(() => {
+    const s = new Set()
+    for (const g of (dResult?.genes || [])) if (g.mutation) s.add(g.gene)
+    return s
+  }, [dResult])
 
   // shared targets preview (compound ∩ disease) from the filtered sets
   const shared = useMemo(() => {
@@ -150,7 +156,7 @@ export default function NetPharmModule({ onSwitchModules, onHandoff }) {
   function loadCaseStudy() {
     setDisease('triple-negative breast cancer'); setCompound('curcumin')
     setDSources({ opentargets: true, ctd: false }); setCSources({ dgidb: true, chembl: true })
-    setDMinScore(0); setCMinScore(0); setDCovOnly(false); setCCovOnly(false); setStep('disease')
+    setDMinScore(0); setCMinScore(0); setDCovOnly(false); setCCovOnly(false); setDMutOnly(false); setStep('disease')
   }
   // wipe the whole workspace back to a clean slate for a fresh analysis
   function newRun() {
@@ -159,7 +165,7 @@ export default function NetPharmModule({ onSwitchModules, onHandoff }) {
     setDSources({ opentargets: true, ctd: false })
     setCompound(''); setMultiMode(false); setCompoundsText(''); setIsSmiles(false); setCUpload(''); setCResult(null); setCLoading(false)
     setCSources({ dgidb: true, chembl: true })
-    setDMinScore(0); setDCovOnly(false); setCMinScore(0); setCCovOnly(false)
+    setDMinScore(0); setDCovOnly(false); setDMutOnly(false); setCMinScore(0); setCCovOnly(false)
     setConfidence(0.4); setCentrality('mcc'); setTopn(10); setLibs({ GO_BP: true, GO_MF: false, GO_CC: false, KEGG: true })
     setActiveJobId(null); setRunning(false); setResult(null)
   }
@@ -176,6 +182,7 @@ export default function NetPharmModule({ onSwitchModules, onHandoff }) {
       const { job_id } = await api.netpharmRun({
         disease_genes: dSymbols, compound_genes: cSymbols,
         confidence, centrality, topn, libraries,
+        mutation_genes: [...mutSet],
         label: `${compound || 'compound'} × ${dResult.label || disease || 'disease'}`,
       })
       setActiveJobId(job_id)
@@ -315,7 +322,8 @@ export default function NetPharmModule({ onSwitchModules, onHandoff }) {
               disease={disease} setDisease={setDisease} dSources={dSources} setDSources={setDSources}
               multiDiseaseMode={multiDiseaseMode} setMultiDiseaseMode={setMultiDiseaseMode} diseasesText={diseasesText} setDiseasesText={setDiseasesText}
               dUpload={dUpload} setDUpload={setDUpload} dLoading={dLoading} dResult={dResult} loadDisease={loadDisease}
-              dMinScore={dMinScore} setDMinScore={setDMinScore} dCovOnly={dCovOnly} setDCovOnly={setDCovOnly} dCount={dEffective.length}
+              dMinScore={dMinScore} setDMinScore={setDMinScore} dCovOnly={dCovOnly} setDCovOnly={setDCovOnly}
+              dMutOnly={dMutOnly} setDMutOnly={setDMutOnly} dCount={dEffective.length}
               compound={compound} setCompound={setCompound} isSmiles={isSmiles} setIsSmiles={setIsSmiles}
               multiMode={multiMode} setMultiMode={setMultiMode} compoundsText={compoundsText} setCompoundsText={setCompoundsText}
               cSources={cSources} setCSources={setCSources} cUpload={cUpload} setCUpload={setCUpload}
@@ -393,22 +401,24 @@ function GeneSetView({ label, genes, hasResult, accent, empty, fallbackTitle }) 
   if (!hasResult) return <CenterMsg icon={<FlaskIcon className="h-8 w-8 text-slate-600" />} text={fallbackTitle} sub={empty} />
   const list = genes || []
   const nCov = list.filter((g) => g.covalent).length
+  const nMut = list.filter((g) => g.mutation).length
   return (
     <div className="flex h-full flex-col">
       <div className="mb-3 flex items-baseline gap-2 px-1">
         <span className="text-[14px] font-semibold text-white">{label || fallbackTitle}</span>
-        <span className="text-[12px] text-slate-500">· {list.length} genes{nCov > 0 && <span className="text-amber"> · {nCov} covalent</span>} · ranked by score</span>
+        <span className="text-[12px] text-slate-500">· {list.length} genes{nCov > 0 && <span className="text-amber"> · {nCov} covalent</span>}{nMut > 0 && <span className="text-fuchsia-400"> · {nMut} mutation</span>} · ranked by score</span>
       </div>
       <div className="min-h-0 flex-1 overflow-y-auto rounded-xl bg-ink-950/40 p-3">
         <div className="flex flex-wrap gap-1.5">
           {list.map((g) => (
-            <span key={g.gene} title={g.covalent ? 'covalent-targetable' : undefined}
+            <span key={g.gene} title={[g.covalent && 'covalent-targetable', g.mutation && `mutation-associated${g.mut_score != null ? ` (mutation evidence ${g.mut_score})` : ''}`].filter(Boolean).join(' · ') || undefined}
               className="inline-flex items-center gap-1 rounded-md px-2 py-1 text-[11px] font-medium"
-              style={{ background: accent + '1f', color: accent, boxShadow: g.covalent ? 'inset 0 0 0 1px #fbbf24' : 'none' }}>
+              style={{ background: accent + '1f', color: accent, boxShadow: g.covalent ? 'inset 0 0 0 1px #fbbf24' : g.mutation ? 'inset 0 0 0 1px #e879f9' : 'none' }}>
               {g.gene}
               {g.score != null && <span className="font-mono opacity-60">{fmtScore(g.score)}</span>}
               {g.n_compounds > 1 && <span className="rounded bg-violet/25 px-1 text-[9px] font-semibold text-violet">×{g.n_compounds}</span>}
               {g.covalent && <BoltIcon className="h-3 w-3 text-amber" />}
+              {g.mutation && <span className="text-[10px] text-fuchsia-400">🧬</span>}
             </span>
           ))}
           {!list.length && <span className="text-[12px] text-slate-500">No genes pass the current filters — relax the cutoff or covalent toggle.</span>}
@@ -527,7 +537,7 @@ function Panel({ icon, title, children }) {
   )
 }
 
-function DiseasePanel({ disease, setDisease, dSources, setDSources, multiDiseaseMode, setMultiDiseaseMode, diseasesText, setDiseasesText, dUpload, setDUpload, dLoading, dResult, loadDisease, dMinScore, setDMinScore, dCovOnly, setDCovOnly, dCount, onCaseStudy }) {
+function DiseasePanel({ disease, setDisease, dSources, setDSources, multiDiseaseMode, setMultiDiseaseMode, diseasesText, setDiseasesText, dUpload, setDUpload, dLoading, dResult, loadDisease, dMinScore, setDMinScore, dCovOnly, setDCovOnly, dMutOnly, setDMutOnly, dCount, onCaseStudy }) {
   return (
     <Panel icon={<VirusIcon className="h-4 w-4 text-violet" />} title="Disease targets">
       <button onClick={onCaseStudy}
@@ -594,6 +604,7 @@ function DiseasePanel({ disease, setDisease, dSources, setDSources, multiDisease
             <input type="range" min={0} max={0.9} step={0.05} value={dMinScore}
               onChange={(e) => setDMinScore(parseFloat(e.target.value))} className="mt-1 w-full accent-violet" />
             <CovalentToggle on={dCovOnly} onClick={() => setDCovOnly((v) => !v)} n={dResult.covalent_count} />
+            <MutationToggle on={dMutOnly} onClick={() => setDMutOnly((v) => !v)} n={dResult.mutation_count} />
             <div className="mt-2 text-[11px] text-slate-400">
               <span className="text-white">{dCount}</span> of {dResult.count} genes selected
             </div>
@@ -790,6 +801,17 @@ function CovalentToggle({ on, onClick, n }) {
       <BoltIcon className={`h-4 w-4 ${on ? 'text-amber' : 'text-slate-500'}`} />
       <span className="text-[12px] text-slate-200">Covalent-targetable only</span>
       {n != null && <span className="ml-auto rounded bg-ink-800 px-1.5 py-0.5 text-[10px] text-amber">{n}</span>}
+    </button>
+  )
+}
+function MutationToggle({ on, onClick, n }) {
+  return (
+    <button onClick={onClick} title="Keep only targets with somatic or germline (genetic) mutation evidence for this disease (Open Targets) — for studying mutated / resistance drivers"
+      className={`mt-2 flex w-full items-center gap-2 rounded-lg border px-2.5 py-2 text-left transition
+        ${on ? 'border-fuchsia-500/50 bg-fuchsia-500/10' : 'border-ink-700 bg-ink-950/40 hover:border-ink-600'}`}>
+      <span className={`text-[13px] ${on ? '' : 'opacity-60 grayscale'}`}>🧬</span>
+      <span className="text-[12px] text-slate-200">Mutation-associated only</span>
+      {n != null && <span className="ml-auto rounded bg-ink-800 px-1.5 py-0.5 text-[10px] text-fuchsia-300">{n}</span>}
     </button>
   )
 }

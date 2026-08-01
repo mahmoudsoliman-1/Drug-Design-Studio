@@ -9,6 +9,7 @@ import * as api from '../../api.js'
 export default function HubStructures({ hubs, topn = 10, onSendToDocking }) {
   const genes = useMemo(() => (hubs?.ranking || []).slice(0, topn).map((r) => r.gene), [hubs, topn])
   const [state, setState] = useState({ loading: false, data: null, error: '' })
+  const [mutOnly, setMutOnly] = useState(false)
 
   useEffect(() => {
     if (!genes.length) return
@@ -29,23 +30,64 @@ export default function HubStructures({ hubs, topn = 10, onSendToDocking }) {
       sub={`Mapping ${genes.length} hub genes → UniProt → ranked PDB entries (RCSB · AlphaFold).`} />
   }
 
+  const nMut = state.data.reduce((a, s) => a + (s.n_mutants || 0), 0)
   return (
     <div className="flex h-full flex-col">
-      <div className="mb-2 flex items-center justify-between px-1">
+      <div className="mb-2 flex items-center justify-between gap-2 px-1">
         <div className="text-[14px] font-semibold text-white">Representative structures for docking
           <span className="ml-1 text-[12px] font-normal text-slate-500">· top {state.data.length} hub genes</span></div>
-        <div className="text-[11px] text-slate-500">ranked: method · resolution · coverage · bound ligand</div>
+        <button onClick={() => setMutOnly((v) => !v)} title="Show only PDB structures that carry engineered mutations (mutants), excluding wild-type"
+          className={`inline-flex items-center gap-1.5 rounded-lg px-2.5 py-1 text-[11px] font-medium ring-1 transition ${mutOnly ? 'bg-fuchsia-500/15 text-fuchsia-300 ring-fuchsia-500/40' : 'bg-ink-800/70 text-slate-300 ring-ink-600 hover:text-white'}`}>
+          🧬 Mutant structures only{nMut > 0 && <span className="opacity-70">· {nMut}</span>}
+        </button>
       </div>
+      {mutOnly && (
+        <div className="mb-2 rounded-md bg-fuchsia-500/[0.07] px-2.5 py-1.5 text-[10.5px] text-slate-400 ring-1 ring-fuchsia-500/20">
+          Showing wild-type-excluded structures that carry engineered mutations. The mutation string (e.g. <span className="font-mono">T790M</span>) is shown when the PDB provides it — read it to pick the resistance mutation you want, since the count also includes crystallisation/construct mutations.
+        </div>
+      )}
       <div className="min-h-0 flex-1 space-y-3 overflow-y-auto pr-1">
-        {state.data.map((s) => <GeneCard key={s.gene} s={s} onSendToDocking={onSendToDocking} />)}
+        {state.data.map((s) => <GeneCard key={s.gene} s={s} onSendToDocking={onSendToDocking} mutOnly={mutOnly} />)}
       </div>
     </div>
   )
 }
 
-function GeneCard({ s, onSendToDocking }) {
+function GeneCard({ s, onSendToDocking, mutOnly }) {
   const [open, setOpen] = useState(false)
   const rec = s.recommended
+  const muts = s.mutants || []
+
+  if (mutOnly) {
+    return (
+      <div className="rounded-xl bg-ink-900/50 p-3 ring-1 ring-ink-700/50">
+        <div className="flex items-baseline gap-2">
+          <span className="text-[15px] font-bold text-white">{s.gene}</span>
+          {s.uniprot && <a href={`https://www.uniprot.org/uniprotkb/${s.uniprot}`} target="_blank" rel="noreferrer"
+            className="text-[11px] font-medium text-violet hover:underline">{s.uniprot}</a>}
+          <span className="ml-auto text-[11px] text-slate-500">{muts.length} mutant{muts.length === 1 ? '' : 's'}</span>
+        </div>
+        {muts.length === 0 ? (
+          <div className="mt-2 rounded-lg bg-ink-950/50 p-2 text-[11.5px] text-slate-500 ring-1 ring-ink-700/50">No mutant structure in the PDB for this target — use a wild-type entry (toggle off) or the AlphaFold model.</div>
+        ) : (
+          <div className="mt-2 space-y-1.5">
+            {muts.map((a) => (
+              <div key={a.pdb_id} className="flex flex-wrap items-center gap-2 rounded-lg bg-ink-950/50 p-2 text-[11px] ring-1 ring-fuchsia-500/20">
+                <a href={`https://www.rcsb.org/structure/${a.pdb_id}`} target="_blank" rel="noreferrer"
+                  className="text-[13px] font-bold text-accent hover:underline">{a.pdb_id}</a>
+                <MutBadge a={a} />
+                {a.method && <span className="text-slate-500">{a.method}</span>}
+                {a.resolution != null && <span className="text-slate-500">{a.resolution} Å</span>}
+                {a.best_ligand ? <span className="text-emerald-400/80">lig {a.best_ligand.id}</span> : <span className="text-amber/80">apo</span>}
+                <button onClick={() => onSendToDocking?.({ pdbId: a.pdb_id, gene: s.gene, ligand: a.best_ligand?.id || null })}
+                  className="ml-auto inline-flex items-center gap-1 rounded bg-accent px-2 py-0.5 text-[10.5px] font-semibold text-ink-950 hover:brightness-110"><SendIcon /> dock</button>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+    )
+  }
   return (
     <div className="rounded-xl bg-ink-900/50 p-3 ring-1 ring-ink-700/50">
       <div className="flex items-baseline justify-between gap-3">
@@ -69,6 +111,7 @@ function GeneCard({ s, onSendToDocking }) {
             {rec.best_ligand
               ? <Badge tone="lig">ligand {rec.best_ligand.id}</Badge>
               : <Badge tone="warn">apo · no ligand</Badge>}
+            {rec.mutation_count > 0 && <MutBadge a={rec} />}
           </div>
           {rec.title && <div className="mt-1.5 text-[11.5px] text-slate-400">{rec.title}</div>}
           {rec.best_ligand?.name && <div className="mt-0.5 text-[11px] text-slate-500">bound: {rec.best_ligand.name}</div>}
@@ -100,6 +143,7 @@ function GeneCard({ s, onSendToDocking }) {
                   {a.resolution != null && <span className="text-slate-500">{a.resolution} Å</span>}
                   {a.coverage != null && <span className="text-slate-500">{Math.round(a.coverage * 100)}%</span>}
                   {a.best_ligand && <span className="text-emerald-400/80">lig {a.best_ligand.id}</span>}
+                  {a.mutation_count > 0 && <MutBadge a={a} />}
                   <button onClick={() => onSendToDocking?.({ pdbId: a.pdb_id, gene: s.gene, ligand: a.best_ligand?.id || null })}
                     className="ml-auto rounded bg-ink-800 px-2 py-0.5 text-[10.5px] text-accent ring-1 ring-accent/25 hover:bg-ink-700">dock</button>
                 </div>
@@ -125,6 +169,13 @@ function GeneCard({ s, onSendToDocking }) {
   )
 }
 
+// mutation badge: shows the substitution string (e.g. T790M) when available,
+// otherwise the count of engineered mutations from the PDB metadata.
+function MutBadge({ a }) {
+  const label = a.mutation ? a.mutation : `${a.mutation_count} mut${a.mutation_count === 1 ? '' : 's'}`
+  return <span title={a.mutation ? `mutations: ${a.mutation}` : `${a.mutation_count} engineered mutation(s) in this structure`}
+    className="rounded-md bg-fuchsia-500/15 px-1.5 py-0.5 text-[10px] font-medium text-fuchsia-300 ring-1 ring-fuchsia-500/30">🧬 {label}</span>
+}
 function Badge({ children, tone }) {
   const c = tone === 'warn' ? 'bg-amber/10 text-amber ring-amber/25'
     : tone === 'lig' ? 'bg-emerald-500/10 text-emerald-300 ring-emerald-500/25'

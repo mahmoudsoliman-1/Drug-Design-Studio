@@ -88,13 +88,22 @@ def _pdb_candidates(entry):
     return out
 
 
-def _ligands_batch(pdb_ids):
-    """One RCSB GraphQL call → {pdb_id: {title, ligands:[{id,name,mw}]}} for all ids."""
+def _entry_meta(pdb_ids, acc=None):
+    """One RCSB GraphQL call → {pdb_id: {title, ligands, mutation_count, mutation}}.
+
+    Mutation info is taken from the polymer entity that matches the target UniProt
+    accession (so partner-chain mutations are not misattributed). `mutation_count`
+    is the reliable count of engineered mutations; `mutation` is the substitution
+    string when the deposition provides one (e.g. "T790M, L858R"), else None."""
     if not pdb_ids:
         return {}
     ids = '","'.join(pdb_ids)
     query = ('{entries(entry_ids:["' + ids + '"]){rcsb_id struct{title} '
-             'nonpolymer_entities{nonpolymer_comp{chem_comp{id name formula_weight}}}}}')
+             'nonpolymer_entities{nonpolymer_comp{chem_comp{id name formula_weight}}} '
+             'polymer_entities{entity_poly{rcsb_mutation_count} '
+             'rcsb_polymer_entity{pdbx_mutation} '
+             'rcsb_polymer_entity_container_identifiers{reference_sequence_identifiers'
+             '{database_accession database_name}}}}}')
     try:
         r = requests.post(RCSB_GQL, headers=UA, json={"query": query}, timeout=30)
         data = (r.json().get("data") or {}).get("entries") or []
@@ -112,7 +121,26 @@ def _ligands_batch(pdb_ids):
                 continue
             ligs.append({"id": cid, "name": cc.get("name") or cid,
                          "mw": cc.get("formula_weight")})
-        out[e["rcsb_id"].upper()] = {"title": (e.get("struct") or {}).get("title") or "", "ligands": ligs}
+        # mutation: prefer the polymer entity matching our UniProt accession
+        pes = e.get("polymer_entities") or []
+        chosen = None
+        for pe in pes:
+            refs = ((pe.get("rcsb_polymer_entity_container_identifiers") or {})
+                    .get("reference_sequence_identifiers") or [])
+            if acc and any((rr or {}).get("database_accession") == acc
+                           and (rr or {}).get("database_name") == "UniProt" for rr in refs):
+                chosen = pe
+                break
+        if chosen is None and pes:
+            chosen = max(pes, key=lambda pe: ((pe.get("entity_poly") or {}).get("rcsb_mutation_count") or 0))
+        mut_count, mut_str = 0, None
+        if chosen:
+            mut_count = int(((chosen.get("entity_poly") or {}).get("rcsb_mutation_count")) or 0)
+            raw = (((chosen.get("rcsb_polymer_entity") or {}).get("pdbx_mutation")) or "").strip()
+            if raw and any(ch.isdigit() for ch in raw):   # keep "T790M, L858R"; drop "YES"/null
+                mut_str = raw
+        out[e["rcsb_id"].upper()] = {"title": (e.get("struct") or {}).get("title") or "",
+                                     "ligands": ligs, "mutation_count": mut_count, "mutation": mut_str}
     return out
 
 
@@ -181,18 +209,23 @@ def _one_gene(gene, max_candidates=24):
         -(c.get("coverage") or 0),
     ))
     top = cands[:max_candidates]
-    lig_map = _ligands_batch([c["pdb_id"] for c in top])
+    lig_map = _entry_meta([c["pdb_id"] for c in top], acc)
     for c in top:
         info = lig_map.get(c["pdb_id"], {})
         c["title"] = info.get("title", "")
         ligs = sorted(info.get("ligands", []), key=lambda l: -_drug_like(l))
         c["ligands"] = ligs[:6]
         c["best_ligand"] = ligs[0] if ligs else None
+        c["mutation_count"] = info.get("mutation_count", 0)
+        c["mutation"] = info.get("mutation")      # substitution string or None
         c["score"] = _score(c)
 
     top.sort(key=lambda c: -c["score"])
+    mutants = [c for c in top if (c.get("mutation_count") or 0) > 0][:8]
     return {"gene": gene, "uniprot": acc, "name": name,
-            "recommended": top[0], "alternatives": top[1:4], "alphafold": af, "error": None}
+            "recommended": top[0], "alternatives": top[1:6],
+            "mutants": mutants, "n_mutants": len(mutants),
+            "alphafold": af, "error": None}
 
 
 def hub_structures(genes, max_genes=12):

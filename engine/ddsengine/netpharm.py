@@ -142,11 +142,11 @@ def _ot_disease_targets(disease, limit):
         if not hits:
             return {"genes": [], "label": None, "efo": None}
         efo, label = hits[0]["id"], hits[0]["name"]
-        scored, page, size = {}, 0, 500
+        scored, mutation, page, size = {}, {}, 0, 500
         while len(scored) < int(limit):
             ar = requests.post(OT_GQL, headers=UA, timeout=40, json={
                 "query": "query($efo:String!,$i:Int!,$size:Int!){disease(efoId:$efo){associatedTargets"
-                         "(page:{index:$i,size:$size}){rows{target{approvedSymbol}score}}}}",
+                         "(page:{index:$i,size:$size}){rows{target{approvedSymbol}score datatypeScores{id score}}}}}",
                 "variables": {"efo": efo, "i": page, "size": size},
             })
             rows = ar.json().get("data", {}).get("disease", {}).get("associatedTargets", {}).get("rows", [])
@@ -159,12 +159,21 @@ def _ot_disease_targets(disease, limit):
                 g = _norm(t.get("approvedSymbol", ""))
                 if g and _GENE_RE.match(g) and g not in scored:
                     scored[g] = round(float(r.get("score", 0) or 0), 3)
+                    # mutation-associated: Open Targets somatic-mutation evidence, or
+                    # germline (genetic-association) mutation evidence, for this disease.
+                    # Disease-subtype EFOs (e.g. TNBC) often carry the mutation signal on
+                    # the genetic-association datatype rather than somatic_mutation.
+                    dts = {d.get("id"): float(d.get("score") or 0) for d in (r.get("datatypeScores") or [])}
+                    som = dts.get("somatic_mutation", 0.0)
+                    gen = dts.get("genetic_association", 0.0)
+                    if som > 0 or gen >= 0.1:
+                        mutation[g] = round(max(som, gen), 3)
             page += 1
             if len(rows) < size:
                 break
-        return {"scored": scored, "label": label, "efo": efo}
+        return {"scored": scored, "mutation": mutation, "label": label, "efo": efo}
     except Exception as e:
-        return {"scored": {}, "label": None, "efo": None, "error": str(e)[:200]}
+        return {"scored": {}, "mutation": {}, "label": None, "efo": None, "error": str(e)[:200]}
 
 
 def _ctd_disease_targets(disease, limit):
@@ -190,7 +199,7 @@ def disease_targets(disease, sources=("opentargets",), uploaded="", limit=300):
     plus any user list. Each gene carries an Open Targets association score (0–1,
     None if only from CTD/upload) and a covalent-targetable flag, sorted by score."""
     disease = (disease or "").strip()
-    scored, sources_of, label, efo, errors = {}, {}, None, None, {}
+    scored, mutation, sources_of, label, efo, errors = {}, {}, {}, None, None, {}
 
     def note(g, src):
         sources_of.setdefault(g, set()).add(src)
@@ -201,6 +210,7 @@ def disease_targets(disease, sources=("opentargets",), uploaded="", limit=300):
         for g, sc in ot.get("scored", {}).items():
             scored[g] = sc
             note(g, "opentargets")
+        mutation.update(ot.get("mutation", {}))
         if ot.get("error"):
             errors["opentargets"] = ot["error"]
     if "ctd" in sources and disease:
@@ -216,6 +226,7 @@ def disease_targets(disease, sources=("opentargets",), uploaded="", limit=300):
     all_genes = list(sources_of.keys())
     all_genes.sort(key=lambda g: (-(scored.get(g) if scored.get(g) is not None else -1), g))
     genes = [{"gene": g, "score": scored.get(g), "covalent": _is_covalent(g),
+              "mutation": g in mutation, "mut_score": mutation.get(g),
               "sources": sorted(sources_of[g])} for g in all_genes]
 
     by_source = {}
@@ -227,6 +238,7 @@ def disease_targets(disease, sources=("opentargets",), uploaded="", limit=300):
         "disease": disease, "label": label or disease, "efo": efo,
         "genes": genes, "count": len(genes),
         "covalent_count": sum(1 for x in genes if x["covalent"]),
+        "mutation_count": sum(1 for x in genes if x["mutation"]),
         "scored_count": sum(1 for x in genes if x["score"] is not None),
         "by_source": by_source,
         "errors": errors,
@@ -593,7 +605,7 @@ def enrichment(genes, libraries=("GO_BP", "KEGG"), top=12):
 # --------------------------- full pipeline (job) ---------------------------
 def run_pipeline(disease_genes, compound_genes, confidence=0.4,
                  centrality="mcc", topn=10, libraries=("GO_BP", "KEGG"),
-                 progress=None):
+                 mutation_genes=(), progress=None):
     """Intersect → PPI → hubs → enrichment. Returns the full result for the UI."""
     def step(done, total, msg):
         if progress:
@@ -614,16 +626,19 @@ def run_pipeline(disease_genes, compound_genes, confidence=0.4,
 
     step(4, 4, "Done")
     hub_set = set(hubs.get("hubs", []))
+    mut_set = set(mutation_genes or ())
     degree = {r["gene"]: r["degree"] for r in hubs.get("ranking", [])}
     cyto_nodes = [{"data": {"id": n, "label": n, "degree": degree.get(n, 0),
-                            "hub": n in hub_set, "covalent": _is_covalent(n)}} for n in net["nodes"]]
+                            "hub": n in hub_set, "covalent": _is_covalent(n),
+                            "mutation": n in mut_set}} for n in net["nodes"]]
     cyto_edges = [{"data": {"id": f"{e['source']}-{e['target']}", "source": e["source"],
                             "target": e["target"], "score": e["score"]}} for e in net["edges"]]
 
     return {
         "counts": {"disease": len(dset), "compound": len(cset), "shared": len(shared),
                    "nodes": len(net["nodes"]), "edges": len(net["edges"]),
-                   "covalent": sum(1 for n in net["nodes"] if _is_covalent(n))},
+                   "covalent": sum(1 for n in net["nodes"] if _is_covalent(n)),
+                   "mutation": sum(1 for n in net["nodes"] if n in mut_set)},
         "shared_genes": shared,
         "network": {"nodes": cyto_nodes, "edges": cyto_edges},
         "hubs": hubs,

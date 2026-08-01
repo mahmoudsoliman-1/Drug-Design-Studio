@@ -18,7 +18,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from typing import Optional, List
 
-from ddsengine import prep, dock, interactions, analysis, minimize, covalent, validate as validate_mod, netpharm, pdbmap
+from ddsengine import prep, dock, interactions, analysis, minimize, covalent, validate as validate_mod, netpharm, pdbmap, qsar
 
 app = FastAPI(title="Drug Design Studio Engine", version="1.0.0")
 app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"])
@@ -175,11 +175,53 @@ class NetPharmRunReq(BaseModel):
     centrality: str = "mcc"
     topn: int = 10
     libraries: List[str] = ["GO_BP", "KEGG"]
+    mutation_genes: List[str] = []
     label: Optional[str] = None
 
 
 class HubStructuresReq(BaseModel):
     genes: List[str] = []
+
+
+class QsarTestCaseReq(BaseModel):
+    name: str = "esol"
+
+
+class QsarChemblReq(BaseModel):
+    target: str
+    activity_type: str = "IC50"
+    limit: int = 1500
+
+
+class QsarBuildReq(BaseModel):
+    smiles: List[str] = []
+    y: List[float] = []
+    task: str = "regression"
+    algo: str = "rf"
+    descriptor: str = "morgan"
+    split: str = "random"
+    cv: int = 5
+    y_scramble: bool = True
+
+
+class QsarPredictReq(BaseModel):
+    model_id: str
+    smiles: List[str] = []
+
+
+class QsarDesignReq(BaseModel):
+    model_id: str
+    scaffold: Optional[str] = None
+    rgroups: Optional[dict] = None
+    smiles: Optional[List[str]] = None
+    max_n: int = 400
+
+
+class QsarDepictReq(BaseModel):
+    smiles: List[str] = []
+    legends: Optional[List[str]] = None
+    pharmacophore: bool = True
+    per_row: int = 4
 
 
 # --------------------------- AI (Groq / Llama) ---------------------------
@@ -571,11 +613,28 @@ def _run_netpharm(jid):
             req.get("disease_genes", []), req.get("compound_genes", []),
             confidence=req.get("confidence", 0.7), centrality=req.get("centrality", "degree"),
             topn=req.get("topn", 10), libraries=tuple(req.get("libraries", ["GO_BP", "KEGG"])),
-            progress=progress)
+            mutation_genes=req.get("mutation_genes", []), progress=progress)
         job["status"] = "done"
     except Exception as e:
         job["status"] = "error"
         job["error"] = str(e)[:300]
+    _save_job(job)
+
+
+def _run_qsar_build(jid):
+    job = JOBS[jid]
+    r = job["request"]
+    try:
+        res = qsar.build_and_evaluate(r.get("smiles", []), r.get("y", []),
+                                      task=r.get("task", "regression"), algo=r.get("algo", "rf"),
+                                      descriptor=r.get("descriptor", "morgan"), split=r.get("split", "random"),
+                                      cv=r.get("cv", 5), y_scramble=r.get("y_scramble", True))
+        if res.get("error"):
+            job["status"] = "error"; job["error"] = res["error"]
+        else:
+            job["result"] = res; job["status"] = "done"
+    except Exception as e:
+        job["status"] = "error"; job["error"] = str(e)[:300]
     _save_job(job)
 
 
@@ -772,6 +831,41 @@ def netpharm_disease_targets_multi(req: MultiDiseaseReq):
 @app.post("/api/netpharm/hub-structures")
 def netpharm_hub_structures(req: HubStructuresReq):
     return pdbmap.hub_structures(req.genes)
+
+
+@app.post("/api/qsar/test-case")
+def qsar_test_case(req: QsarTestCaseReq):
+    return qsar.load_test_case(req.name)
+
+
+@app.post("/api/qsar/chembl")
+def qsar_chembl(req: QsarChemblReq):
+    return qsar.fetch_chembl(req.target, req.activity_type, req.limit)
+
+
+@app.post("/api/qsar/build")
+def qsar_build(req: QsarBuildReq):
+    job = _new_job("qsar", "QSAR model", req.dict(), None)
+    _save_job(job)
+    EXECUTOR.submit(_run_qsar_build, job["job_id"])
+    return {"job_id": job["job_id"]}
+
+
+@app.post("/api/qsar/predict")
+def qsar_predict(req: QsarPredictReq):
+    return qsar.predict(req.model_id, req.smiles)
+
+
+@app.post("/api/qsar/design")
+def qsar_design(req: QsarDesignReq):
+    return qsar.design(req.model_id, scaffold=req.scaffold, rgroups=req.rgroups,
+                       smiles=req.smiles, max_n=req.max_n)
+
+
+@app.post("/api/qsar/depict")
+def qsar_depict(req: QsarDepictReq):
+    return qsar.depict_grid(req.smiles, legends=req.legends,
+                            pharmacophore=req.pharmacophore, per_row=req.per_row)
 
 
 @app.post("/api/netpharm/run")

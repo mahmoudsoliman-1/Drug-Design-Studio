@@ -94,6 +94,7 @@ export default function DockingModule({ onSwitchModules, handoff, onHandoffConsu
   const [screenSmiles, setScreenSmiles] = useState(LIBRARY.slice(0, 8).map((l) => `${l.smiles}  ${l.id}`).join('\n'))
   const [busy, setBusy] = useState('')               // '' | 'receptor'
   const [errorMsg, setErrorMsg] = useState('')
+  const [handoffNote, setHandoffNote] = useState('')
   const [dockRes, setDockRes] = useState(null)
   const [screenRes, setScreenRes] = useState(null)
   const [cleared, setCleared] = useState(false)
@@ -263,10 +264,22 @@ export default function DockingModule({ onSwitchModules, handoff, onHandoffConsu
   // jump to the Receptor step and prefetch the chosen PDB (box auto-centres on its
   // co-crystallised ligand via the engine's receptor prep).
   useEffect(() => {
-    if (!handoff?.pdbId) return
-    setMode('single'); setActive('receptor')
-    loadReceptorById(handoff.pdbId)
-    onHandoffConsumed && onHandoffConsumed()
+    if (handoff?.pdbId) {
+      setMode('single'); setActive('receptor')
+      loadReceptorById(handoff.pdbId)
+      onHandoffConsumed && onHandoffConsumed()
+      return
+    }
+    // inbound ligand library (e.g. QSAR → dock the top designed candidates): load
+    // them as a virtual-screening library; the user supplies the receptor.
+    if (handoff?.ligands?.length) {
+      const lib = handoff.ligands.map((l) => `${l.smiles}  ${l.id || ''}`.trim()).join('\n')
+      setScreenSmiles(lib); setMode('screen'); setActive('ligands')
+      setHandoffNote(handoff.targetHint
+        ? `Loaded ${handoff.ligands.length} candidate(s) from QSAR for target ${handoff.targetHint}. Load its receptor (fetch a PDB or upload a structure) on the Receptor step, then screen.`
+        : `Loaded ${handoff.ligands.length} candidate(s) from QSAR as a screening library. Load a receptor on the Receptor step, then screen.`)
+      onHandoffConsumed && onHandoffConsumed()
+    }
   }, [handoff])
 
   async function loadReceptorFile(file) {
@@ -394,6 +407,12 @@ export default function DockingModule({ onSwitchModules, handoff, onHandoffConsu
 
         {engine === 'offline' && <EngineBanner />}
         {errorMsg && <ErrorBar msg={errorMsg} onClose={() => setErrorMsg('')} />}
+        {handoffNote && (
+          <div className="mx-4 mt-3 flex items-start justify-between gap-3 rounded-lg bg-sky-500/10 px-3 py-2 text-[12px] text-sky-200 ring-1 ring-sky-500/30">
+            <span>{handoffNote}</span>
+            <button onClick={() => setHandoffNote('')} className="shrink-0 text-sky-300/70 hover:text-sky-200">✕</button>
+          </div>
+        )}
 
         <main className="flex min-h-0 flex-1 gap-4 p-4">
           {active === 'results' && hasResults ? (

@@ -129,6 +129,7 @@ function buildReport(d) {
     <b>${result.counts.edges}</b> edges, and the top hub genes below.` : ''}</p>`)
 
   sec.push(`<h2>2. Methods &amp; protocol</h2>
+    <p>Drug Design Studio (DDS)<sup>10&ndash;12</sup> was used to retrieve and assemble the compound and disease targets, identify their shared targets, construct and analyse the protein&ndash;protein interaction network, rank the hub genes, and perform the functional enrichment analysis reported here.</p>
     <p><b>Compound targets.</b> ${d.multiCompound ? 'Multiple compounds were queried and their predicted/known targets <b>pooled (union)</b>, each target tagged with the number of compounds engaging it.' : 'Targets were retrieved for the compound.'}
     Targets came from DGIdb (curated drug–gene interactions) and ChEMBL (measured bioactivity), mapped to a 0–1 confidence and de-duplicated to official gene symbols.</p>
     <p><b>Disease targets.</b> ${d.multiDisease ? 'Multiple diseases were queried and their <b>common (intersection)</b> genes taken as the disease target set (shared/comorbid mechanism).' : 'Disease-associated genes were retrieved and ranked by association score.'}
@@ -187,7 +188,9 @@ function buildReport(d) {
     <li>Chin CH, et al. cytoHubba: identifying hub objects and sub-networks. <i>BMC Syst Biol</i> 2014;8(S4):S11.</li>
     <li>Hagberg AA, et al. Exploring network structure with NetworkX. <i>Proc. SciPy</i> 2008:11–15.</li>
     <li>Kuleshov MV, et al. Enrichr. <i>Nucleic Acids Res</i> 2016;44:W90–7.</li>
-    <li>Soliman ME. Drug Design Suite (DDS) 2.0: A Unified Platform for Network Pharmacology Integrated with Docking and Virtual Screening Workflow for Covalent/Non-Covalent Binders. <i>(Under review).</i> Molecular Bio-computation &amp; Drug Design Laboratory, UKZN.</li>
+    <li>Mahmoud E. Soliman. Drug Design Studio (DDS): An all-in-one cross-platform for covalent/non-covalent docking, covalent binders virtual screening and protein–ligand interaction analysis. <i>(Under review).</i></li>
+    <li>Mahmoud E. Soliman. Drug Design Suite (DDS) 2.0: A Unified Platform for Network Pharmacology Integrated with Docking and Virtual Screening Workflow for Covalent/Non-Covalent Binders. <i>(Under review).</i></li>
+    <li>Mahmoud E. Soliman. Drug Design Studio (DDS) 3.0: A Streamlined QSAR, 3D-QSAR and Pharmacophore Modelling Platform Coupling Ligand-Based Activity Prediction to Covalent and Non-Covalent Structure-Based Discovery. <i>(Under review).</i></li>
   </ol>`)
 
   return `<!doctype html><html><head><meta charset="utf-8"><title>Network Pharmacology Report — ${esc(d.title)}</title>

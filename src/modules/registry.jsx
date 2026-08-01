@@ -14,6 +14,7 @@
 
 import DockingModule from '../App.jsx'
 import NetPharmModule from './netpharm/NetPharmModule.jsx'
+import QsarModule from './qsar/QsarModule.jsx'
 
 export const MODULES = [
   {
@@ -38,13 +39,13 @@ export const MODULES = [
   },
   {
     id: 'qsar',
-    name: 'QSAR',
-    blurb: 'Descriptors, model training and validation, activity prediction.',
-    tags: ['Descriptors', 'Models', 'Predict'],
+    name: 'QSAR / 3D-QSAR & Pharmacophore',
+    blurb: 'Descriptors, ML model training and validation, activity prediction — from ChEMBL or your data.',
+    tags: ['Descriptors', 'RandomForest', '3D-QSAR', 'Pharmacophore'],
     icon: 'chart',
     accent: 'qsar',
-    status: 'soon',
-    component: null,
+    status: 'ready',
+    component: QsarModule,
   },
 ]
 

@@ -179,3 +179,22 @@ export function netpharmRun(payload) {
 export function netpharmHubStructures(genes) {
   return post('/api/netpharm/hub-structures', { genes })
 }
+
+export function qsarTestCase(name) {
+  return post('/api/qsar/test-case', { name })
+}
+export function qsarChembl({ target, activity_type, limit }) {
+  return post('/api/qsar/chembl', { target, activity_type, limit })
+}
+export function qsarBuild(payload) {
+  return post('/api/qsar/build', payload)
+}
+export function qsarPredict(model_id, smiles) {
+  return post('/api/qsar/predict', { model_id, smiles })
+}
+export function qsarDesign(payload) {
+  return post('/api/qsar/design', payload)
+}
+export function qsarDepict(payload) {
+  return post('/api/qsar/depict', payload)
+}

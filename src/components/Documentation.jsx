@@ -7,10 +7,12 @@ import Logo from './Logo.jsx'
 /*  with overview, install, protocols/methods, quick start, references. */
 /* ------------------------------------------------------------------ */
 
-export const DOC_VERSION = 'v2.0.0'
+export const DOC_VERSION = 'v3.0.0'
 
 export const CITATION = 'Mahmoud E. Soliman. Drug Design Studio (DDS): An all-in-one cross-platform for covalent/non-covalent docking, covalent binders virtual screening and protein–ligand interaction analysis. (Under review).'
 export const CITATION2 = 'Mahmoud E. Soliman. Drug Design Suite (DDS) 2.0: A Unified Platform for Network Pharmacology Integrated with Docking and Virtual Screening Workflow for Covalent/Non-Covalent Binders. (Under review).'
+export const CITATION3 = 'Mahmoud E. Soliman. Drug Design Studio (DDS) 3.0: A Streamlined QSAR, 3D-QSAR and Pharmacophore Modelling Platform Coupling Ligand-Based Activity Prediction to Covalent and Non-Covalent Structure-Based Discovery. (Under review).'
+export const CITATIONS = [CITATION, CITATION2, CITATION3]
 
 const TONE = {
   teal:    { bg: 'bg-accent/15',        text: 'text-accent',        ring: 'ring-accent/30' },
@@ -24,7 +26,7 @@ const TONE = {
 const MODULES = [
   ['docking', 'Docking & VS', false],
   ['netpharm', 'Network pharmacology', false],
-  ['qsar', 'QSAR — coming soon', true],
+  ['qsar', 'QSAR / 3D-QSAR', false],
 ]
 
 const MODULE_SECTIONS = {
@@ -38,7 +40,12 @@ const MODULE_SECTIONS = {
     ['np-methods', 'Methods'], ['np-multi', 'Multi-modes'], ['np-viz', 'Networks & export'],
     ['np-docking', 'Structures → Docking'], ['np-quick', 'Quick start'], ['cite', 'Cite DDS'],
   ],
-  qsar: [],
+  qsar: [
+    ['qs-about', 'Overview'], ['qs-install', 'Installation'], ['qs-workflow', 'Workflow'],
+    ['qs-descriptors', 'Descriptors & models'], ['qs-validation', 'Validation'],
+    ['qs-design', 'Design (DMTA)'], ['qs-viz', 'Structures & export'],
+    ['qs-quick', 'Quick start'], ['cite', 'Cite DDS'],
+  ],
 }
 
 export default function DocsModal({ onClose, initialModule = 'docking' }) {
@@ -196,7 +203,7 @@ function NetpharmDocs() {
       </Section>
 
       <Section id="doc-np-protocols" tone="teal" icon={<Net />} title="The workflow — six steps" sub="Each step feeds the next, exactly like the docking workflow">
-        <Block n="1" title="Disease targets">Enter a disease; DDS retrieves its associated genes from <b>Open Targets</b> (evidence-scored) and optionally <b>CTD</b>, unioned with any pasted/uploaded list. Genes are ranked by association score and can be filtered by a minimum-score cutoff and a covalent-targetable toggle.</Block>
+        <Block n="1" title="Disease targets">Enter a disease; DDS retrieves its associated genes from <b>Open Targets</b> (evidence-scored) and optionally <b>CTD</b>, unioned with any pasted/uploaded list. Genes are ranked by association score and can be filtered by a minimum-score cutoff, a <b>covalent-targetable</b> toggle and a <b>mutation-associated</b> toggle (🧬 targets carrying somatic or germline mutation evidence — for resistance / mutation-focused studies).</Block>
         <Block n="2" title="Compound targets">Enter a compound (name or SMILES); DDS collects its targets from <b>DGIdb</b> (curated drug–gene interactions) and <b>ChEMBL</b> (measured bioactivity), each mapped to a 0–1 confidence, plus any uploaded target list. Ranked by confidence with a cutoff and covalent toggle.</Block>
         <Block n="3" title="Network (intersection + PPI)">The <b>shared targets</b> (compound ∩ disease) are computed and shown as a Venn diagram, then submitted to <b>STRING</b> to build the protein–protein interaction network at a chosen confidence. Rendered as an interactive Cytoscape map.</Block>
         <Block n="4" title="Hub genes">The PPI network is scored by topological <b>centrality</b> — MCC (Maximal Clique Centrality, the cytoHubba method) by default, or degree / betweenness / closeness. The top-ranked nodes are the <b>hub genes</b>: the most likely key regulators for follow-up (e.g. docking, MD, experiments).</Block>
@@ -212,8 +219,10 @@ function NetpharmDocs() {
           <Feat tone="amber" icon={<Chart />} title="Hub ranking" desc="Topological centrality — MCC (cytoHubba), degree, betweenness or closeness — flags the most central proteins as hub genes, on the network and in a ranked table." />
           <Feat tone="rose" icon={<Spark />} title="Enrichment" desc="Enrichr over-representation for GO BP/MF/CC and KEGG; each term carries its p-value, adjusted p, combined score and member genes." />
           <Feat tone="emerald" icon={<Link />} title="Covalent filter" desc="Targets are cross-referenced against a curated covalent-ligandability reference (targetable Cys / catalytic Ser·Cys / reactive residues) and badged ⚡ — linking network pharmacology to DDS covalent docking." />
+          <Feat tone="violet" icon={<Spark />} title="Mutation / resistance filter" desc="Targets with somatic-mutation or germline (genetic-association) mutation evidence for the disease (Open Targets) are badged 🧬 and can be isolated — for focusing on mutated drivers and resistance mutations." />
         </div>
         <Callout tone="amber"><b>Gene-symbol normalization.</b> All sources are normalised to official HGNC symbols with an alias table (e.g. HER2→ERBB2, COX2→PTGS2), so combined libraries are always clean, de-duplicated lists and cross-source intersections never miss a synonym.</Callout>
+        <Callout tone="violet"><b>Studying resistant strains &amp; mutations.</b> Toggle <b>Mutation-associated only</b> to keep the targets whose disease link is driven by mutation evidence (somatic in cancers, or germline/genetic for subtype and hereditary diseases). These flags carry through to the shared targets and hub genes, so a whole analysis can be focused on the mutation-driven core — and, at the Structures step, resolved to <b>mutant PDB structures</b> for docking (see below).</Callout>
       </Section>
 
       <Section id="doc-np-multi" tone="violet" icon={<Layers />} title="Multi-compound &amp; multi-disease modes" sub="Several compounds or diseases in one run">
@@ -239,8 +248,10 @@ function NetpharmDocs() {
           <Feat tone="amber" icon={<Chart />} title="Docking-suitability ranking" desc="Candidates are scored for docking: X-ray / cryo-EM over NMR, higher resolution, broader domain coverage, and — most importantly — a bound drug-like ligand that marks the real binding pocket." />
           <Feat tone="violet" icon={<Flask />} title="Recommendation + alternatives" desc="Each gene card shows the recommended PDB (method · resolution · coverage · ligand) plus ranked alternatives, with direct RCSB and UniProt links. A low-coverage caveat flags peptide/fragment entries." />
           <Feat tone="teal" icon={<Download />} title="AlphaFold fallback" desc="When a target has no experimental structure, the predicted AlphaFold model is offered instead, clearly labelled — so even difficult targets have a starting point." />
+          <Feat tone="rose" icon={<Spark />} title="Mutant structures (resistance)" desc="A 🧬 'Mutant structures only' toggle lists PDB entries carrying engineered mutations (wild-type excluded) and shows the mutation string (e.g. T790M) so you can read it and pick the resistant form to dock." />
         </div>
         <Callout tone="emerald"><b>One-click hand-off.</b> Pressing <b>Send to docking</b> on any structure opens the Docking module, <b>prefetches and prepares the receptor</b>, and <b>pre-centres the search box on the co-crystallised ligand</b> (the pocket the structure was solved with). The receptor lands ready on the <b>Receptor</b> step — add your compound, confirm the site, and dock. All structure data comes from public, key-free sources (UniProt, RCSB PDB, AlphaFold DB).</Callout>
+        <Callout tone="rose"><b>Resistance-mutation docking.</b> For a mutation-flagged hub gene, switch on <b>Mutant structures only</b> to exclude wild-type entries and list the PDB structures that carry engineered mutations, each annotated with its mutation string. Because that count also includes crystallisation/construct mutations, the string is shown so you distinguish the true resistance mutation (e.g. <span className="font-mono">T790M</span>) from an incidental one — then send the chosen mutant straight to docking.</Callout>
       </Section>
 
       <Section id="doc-np-quick" tone="emerald" icon={<Play />} title="Quick start" sub="From compound + disease to hub genes">
@@ -261,25 +272,110 @@ function NetpharmDocs() {
   )
 }
 
-/* ============================== QSAR (soon) ============================== */
+/* ========================= QSAR / 3D-QSAR & PHARMACOPHORE ========================= */
 function QsarDocs() {
   return (
-    <div className="grid min-h-[300px] place-items-center text-center">
-      <div>
-        <div className="mx-auto mb-3 grid h-12 w-12 place-items-center rounded-2xl bg-sky-500/15 text-sky-400"><Chart /></div>
-        <div className="text-[16px] font-semibold text-white">QSAR module — coming soon</div>
-        <p className="mx-auto mt-2 max-w-sm text-[12.5px] leading-relaxed text-slate-400">Descriptor calculation, model training and validation, and activity prediction are on the roadmap. Documentation will appear here when the module ships.</p>
+    <>
+      <div className="rounded-2xl bg-gradient-to-br from-sky-500/15 via-ink-800/40 to-accent/10 p-5 ring-1 ring-sky-500/20">
+        <div className="flex items-center gap-3">
+          <div className="grid h-11 w-11 shrink-0 place-items-center rounded-xl bg-sky-500/15 text-sky-400"><Chart /></div>
+          <div>
+            <div className="text-[17px] font-bold leading-tight text-white">QSAR / 3D-QSAR &amp; Pharmacophore Modelling</div>
+            <div className="mt-0.5 text-[12px] leading-snug text-slate-400">Ligand-based activity prediction, rigorous validation and prospective molecular design — from data to synthesis candidates.</div>
+          </div>
+        </div>
       </div>
-    </div>
+
+      <Section id="doc-qs-about" tone="sky" icon={<Book />} title="Overview" sub="Learn from many molecules to predict the activity of new ones">
+        <p>Quantitative structure–activity relationship (QSAR) modelling relates a molecule's chemical structure to a measured property or activity, so that the activity of new, unmade molecules can be predicted. The DDS QSAR module automates the complete ligand-based workflow — data assembly, standardisation, descriptor calculation, machine-learning model training, rigorous validation, and a prospective <b>design</b> step — inside one guided interface, using only established, peer-reviewed engines: molecular handling and descriptors with <b>RDKit</b>, machine learning with <b>scikit-learn</b>.</p>
+        <Callout tone="sky"><b>Design philosophy.</b> DDS does not introduce a new algorithm; it orchestrates trusted engines and <b>enforces best-practice validation by default</b> (external test set, Y-scrambling and applicability domain), so a non-specialist obtains a sound, reproducible model — and then uses it to decide what to synthesise next.</Callout>
+        <div className="grid gap-2.5 sm:grid-cols-2">
+          <Feat tone="sky" icon={<Layers />} title="Descriptors &amp; fingerprints" desc="Morgan/ECFP, RDKit 2D descriptors, MACCS keys, alignment-free 3D-QSAR descriptors and pharmacophore fingerprints." />
+          <Feat tone="teal" icon={<Cpu />} title="Machine-learning models" desc="Random Forest (default), gradient boosting, SVM and PLS — for regression or classification." />
+          <Feat tone="amber" icon={<Check />} title="Rigorous validation" desc="Cross-validated Q²/AUC, external test metrics, Y-scrambling control and applicability-domain flagging." />
+          <Feat tone="emerald" icon={<Spark />} title="Prospective design (DMTA)" desc="Enumerate analogues from a scaffold, predict and rank them by activity, domain and drug-likeness." />
+        </div>
+        <Callout tone="emerald"><b>Offline &amp; private.</b> All descriptor calculation, model training, prediction and structure drawing run locally. The only optional online operation is assembling a dataset from ChEMBL.</Callout>
+      </Section>
+
+      <Section id="doc-qs-install" tone="teal" icon={<Download />} title="Installation" sub="Ships inside the same DDS application">
+        <p>The QSAR module is part of the same DDS desktop application as Docking and Network Pharmacology — there is nothing extra to install. Install DDS (see the <b>Docking &amp; VS</b> tab for the macOS <code className="rounded bg-ink-900 px-1 text-[11px]">.dmg</code> and Windows <code className="rounded bg-ink-900 px-1 text-[11px]">.exe</code> steps), launch it, accept the licence, and pick <b>QSAR / 3D-QSAR</b> from the module hub. Use <b>Switch Module</b> (top-right) to move between modules at any time; long-running model builds continue in the background.</p>
+      </Section>
+
+      <Section id="doc-qs-workflow" tone="sky" icon={<Chart />} title="The workflow — five steps" sub="Each step feeds the next, exactly like the docking workflow">
+        <Block n="1" title="Dataset">Assemble a modelling set of molecules, each a SMILES plus an activity value. Fetch measured bioactivities for a target from <b>ChEMBL</b> (by name or ChEMBL ID, returned as pChEMBL values); <b>upload your own CSV/TSV</b> file (the SMILES and activity columns are auto-detected, with or without a header); paste <b>SMILES,value</b> rows; or load a bundled <b>reproducibility test case</b> (ESOL solubility, or BBBP blood–brain-barrier penetration).</Block>
+        <Block n="2" title="Descriptors">Choose one descriptor family: Morgan/ECFP fingerprint (fast, robust default), RDKit 2D descriptors (interpretable, Hansch-like), MACCS keys, alignment-free 3D-QSAR descriptors, or pharmacophore fingerprints.</Block>
+        <Block n="3" title="Model">Pick an algorithm (Random Forest, gradient boosting, SVM, or PLS for regression) and a train/test split (random or Bemis–Murcko scaffold). The model trains on 80% with 5-fold cross-validation as a background job; the task (regression/classification) is inferred from the data.</Block>
+        <Block n="4" title="Validation">Inspect the metrics and plots on a held-out 20% test set: Q²/R²/RMSE/MAE (regression) or AUC/accuracy/MCC/sensitivity/specificity (classification), plus the Y-scramble control, applicability-domain coverage and top descriptors.</Block>
+        <Block n="5" title="Design">Use the validated model prospectively — enumerate a virtual library from a scaffold and R-groups (or score a pasted list), then rank candidates by predicted activity with applicability-domain and drug-likeness annotations.</Block>
+      </Section>
+
+      <Section id="doc-qs-descriptors" tone="violet" icon={<Layers />} title="Descriptors &amp; models" sub="What the molecule is turned into, and what learns from it">
+        <div className="grid gap-2.5 sm:grid-cols-2">
+          <Card tone="sky" title="Morgan / ECFP fingerprint">2048-bit circular fingerprint (radius 2) encoding local atomic environments — the fast, reliable default for most tasks.</Card>
+          <Card tone="teal" title="RDKit 2D descriptors">The full set of interpretable physicochemical/topological descriptors (logP, TPSA, H-bond counts, ring &amp; connectivity indices) — the modern, whole-molecule analogue of classic Hansch parameters.</Card>
+          <Card tone="amber" title="MACCS keys">166-bit dictionary of predefined substructural patterns.</Card>
+          <Card tone="violet" title="Pharmacophore fingerprint">2D pharmacophore-feature-pair fingerprint (Gobbi–Poppinger) — relates activity to the pattern of pharmacophoric features.</Card>
+          <Card tone="emerald" title="Alignment-free 3D-QSAR">Shape and property descriptors (WHIM, autocorrelation-3D, RDF, asphericity, NPR) from an ETKDG conformer + MMFF94 — captures 3D determinants of activity without manual superposition.</Card>
+          <Card tone="rose" title="Learning algorithms">Random Forest (robust default), gradient-boosted trees, support-vector machines, and PLS regression — with class-weighting for imbalanced classification.</Card>
+        </div>
+      </Section>
+
+      <Section id="doc-qs-validation" tone="amber" icon={<Check />} title="Validation — best practice, enforced" sub="What separates a trustworthy model from an over-optimistic one">
+        <p>Every model is validated automatically against the OECD-aligned standard. The data is split 80:20 into a training and an external test set; the training set is assessed by 5-fold cross-validation (reported as <b>Q²</b> for regression or cross-validated <b>ROC-AUC</b> for classification), and the held-out test set gives the honest external metrics (R²/RMSE/MAE, or AUC/accuracy/MCC/sensitivity/specificity).</p>
+        <div className="grid gap-2.5 sm:grid-cols-2">
+          <Feat tone="amber" icon={<Spark />} title="Y-scrambling control" desc="The activities are shuffled and the model rebuilt; a valid model collapses to Q²≈0 / AUC≈0.5, proving it is not a chance correlation." />
+          <Feat tone="sky" icon={<Target />} title="Applicability domain" desc="A k-nearest-neighbour distance domain flags every prediction as inside (reliable) or outside (extrapolation)." />
+        </div>
+        <Callout tone="amber"><b>Reproducibility.</b> All randomness (splitting, folds, model init, scrambling) is seeded, so the two bundled test cases reproduce their reported metrics exactly on repeated runs (ESOL Q²≈0.67; BBBP AUC≈0.91), and every setting is recorded in the exported report.</Callout>
+      </Section>
+
+      <Section id="doc-qs-design" tone="emerald" icon={<Spark />} title="Prospective design — the DMTA loop" sub="From a validated model to a ranked list of what to synthesise">
+        <p>The workflow closes with the step medicinal chemists actually use QSAR for: the <b>design–make–test–analyse (DMTA)</b> cycle. Instead of stopping at a retrospective model, the validated model triages the synthesis queue.</p>
+        <div className="grid gap-2.5 sm:grid-cols-2">
+          <Card tone="emerald" title="Enumerate">Provide a scaffold with attachment points (<code className="rounded bg-ink-900 px-1 text-[11px]">[*:1]</code>, <code className="rounded bg-ink-900 px-1 text-[11px]">[*:2]</code>) and pick substituents per position from a medicinal-chemistry R-group palette; DDS combinatorially builds the virtual library with RDKit.</Card>
+          <Card tone="sky" title="Score a list">Alternatively, paste candidate SMILES directly to score an existing set.</Card>
+          <Card tone="amber" title="Rank &amp; prioritise">Each candidate is predicted, flagged for applicability domain, and scored for drug-likeness (MW, logP, Lipinski rule-of-five). Candidates are ranked by predicted activity; the top, in-domain, drug-like molecules are starred as the set to synthesise.</Card>
+          <Card tone="violet" title="See the structures">The top candidates render as 2D structures with their pharmacophoric features highlighted — not just SMILES strings.</Card>
+          <Card tone="teal" title="Send to Docking">One click hands the top-ranked candidates to the <b>Docking &amp; Virtual Screening</b> module as a screening library — turning ligand-based prioritisation into a structure-based screen.</Card>
+        </div>
+        <Callout tone="teal"><b>Send top candidates to Docking.</b> After a design run, press <b>Send top N to Docking</b>: the top-ranked candidates are loaded into the Docking module as a <b>virtual-screening library</b> (in screen mode). QSAR is ligand-based, so it hands over the <b>molecules</b>, not a protein — you supply the receptor in Docking (fetch a PDB or upload a structure). When the dataset came from a <b>ChEMBL target</b>, DDS also <b>suggests that protein</b> so you know which structure to load (resolve it directly, or via the Network Pharmacology module). This couples ligand-based design to structure-based screening within one application.</Callout>
+        <Callout tone="emerald"><b>Note.</b> DMTA is long-established medicinal-chemistry practice; DDS's contribution is its automated, applicability-domain-aware, offline implementation, coupled in the same application to covalent-aware structure-based docking — so prioritised analogues can be docked to rationalise the prediction.</Callout>
+      </Section>
+
+      <Section id="doc-qs-viz" tone="rose" icon={<Chart />} title="Structures, figures &amp; export" sub="Publication-ready outputs">
+        <div className="grid gap-2.5 sm:grid-cols-2">
+          <Card tone="sky" title="2D structures + pharmacophore">Dataset and top-candidate molecules are drawn as 2D chemical structures (RDKit), with pharmacophoric features — donors, acceptors, aromatic, hydrophobic, and charged centres — highlighted in colour with a legend.</Card>
+          <Card tone="teal" title="Validation &amp; design figures">Predicted-vs-observed scatter (regression), ROC curve (classification), design-space scatter and top-candidate ranking — each with its own export menu.</Card>
+        </div>
+        <Callout tone="rose"><b>Report &amp; export.</b> Every figure exports as high-resolution <b>PNG (transparent / white)</b> or vector <b>SVG</b>. The <b>Export report</b> button produces a comprehensive PDF — dataset, model configuration, full validation statistics, most-influential descriptors, and the ranked design candidates — with a methods paragraph and a guidance note to review each candidate before synthesis.</Callout>
+      </Section>
+
+      <Section id="doc-qs-quick" tone="sky" icon={<Play />} title="Quick start" sub="A full run in a minute">
+        <Steps items={[
+          <><b>Load data.</b> On the <b>Dataset</b> step, press <b>Test · ESOL</b> (or fetch a target from ChEMBL / upload your CSV).</>,
+          <><b>Choose a descriptor</b> (Morgan is a good default) on the <b>Descriptors</b> step.</>,
+          <><b>Build the model.</b> On the <b>Model</b> step keep Random Forest + random split and press <b>Build model</b>.</>,
+          <><b>Review validation.</b> Check Q²/AUC, the plot, the Y-scramble collapse and the applicability domain.</>,
+          <><b>Design.</b> On the <b>Design</b> step press <b>Load example scaffold</b>, choose R-groups, and <b>Enumerate &amp; rank</b> — then read off the top candidates and export the report.</>,
+          <><b>Send to Docking (optional).</b> Press <b>Send top N to Docking</b> to load the best candidates into the Docking module as a screening library, then supply the receptor there.</>,
+        ]} />
+        <Callout tone="sky"><b>Reproducibility cases.</b> The bundled <b>ESOL</b> (regression) and <b>BBBP</b> (classification) test cases run the full pipeline end-to-end with one click, reproducing their reported metrics under fixed seeds.</Callout>
+      </Section>
+
+      <CiteSection />
+      <Footer />
+    </>
   )
 }
 
 function CiteSection() {
   return (
-    <Section id="doc-cite" tone="sky" icon={<Quote />} title="Cite DDS" sub="Please cite if DDS supports your research">
+    <Section id="doc-cite" tone="sky" icon={<Quote />} title="References &amp; citing DDS" sub="Please cite the relevant work if DDS supports your research">
       <div className="space-y-2.5 rounded-xl border border-ink-700/60 bg-ink-800/40 p-3.5 text-[12px] leading-relaxed text-slate-300">
-        <div className="flex gap-2"><span className="font-semibold text-slate-500">1.</span><span>{CITATION}</span></div>
-        <div className="flex gap-2"><span className="font-semibold text-slate-500">2.</span><span>{CITATION2}</span></div>
+        {CITATIONS.map((c, i) => (
+          <div key={i} className="flex gap-2"><span className="font-semibold text-slate-500">{i + 1}.</span><span>{c}</span></div>
+        ))}
       </div>
     </Section>
   )
@@ -298,7 +394,7 @@ function Footer() {
 /* ------------------------- Cite DDS (shared) ------------------------- */
 export function CiteModal({ onClose }) {
   const [copied, setCopied] = useState(false)
-  const copy = () => { try { navigator.clipboard.writeText(`${CITATION}\n\n${CITATION2}`); setCopied(true); setTimeout(() => setCopied(false), 1600) } catch { /* ignore */ } }
+  const copy = () => { try { navigator.clipboard.writeText(CITATIONS.join('\n\n')); setCopied(true); setTimeout(() => setCopied(false), 1600) } catch { /* ignore */ } }
   return (
     <div className="fixed inset-0 z-50 grid place-items-center bg-ink-950/85 p-4 backdrop-blur-sm" onClick={onClose}>
       <div className="glass w-full max-w-lg rounded-2xl p-5 shadow-2xl" onClick={(e) => e.stopPropagation()}>
@@ -308,11 +404,12 @@ export function CiteModal({ onClose }) {
           <button onClick={onClose} className="grid h-8 w-8 place-items-center rounded-lg bg-ink-800/80 text-slate-400 hover:bg-ink-700 hover:text-white"><X /></button>
         </div>
         <div className="space-y-2.5 rounded-xl border border-ink-700/60 bg-ink-900/60 p-3.5 text-[12px] leading-relaxed text-slate-300">
-          <div className="flex gap-2"><span className="font-semibold text-slate-500">1.</span><span>{CITATION}</span></div>
-          <div className="flex gap-2"><span className="font-semibold text-slate-500">2.</span><span>{CITATION2}</span></div>
+          {CITATIONS.map((c, i) => (
+            <div key={i} className="flex gap-2"><span className="font-semibold text-slate-500">{i + 1}.</span><span>{c}</span></div>
+          ))}
         </div>
         <button onClick={copy} className="mt-3 flex w-full items-center justify-center gap-2 rounded-lg bg-accent/90 px-3 py-2 text-[12px] font-semibold text-ink-950 transition hover:bg-accent">
-          {copied ? <><Check /> Copied both</> : <><Quote /> Copy citations</>}
+          {copied ? <><Check /> Copied all</> : <><Quote /> Copy citations</>}
         </button>
       </div>
     </div>

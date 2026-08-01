@@ -6,7 +6,8 @@ from PyInstaller.utils.hooks import collect_all, collect_submodules, collect_dat
 datas, binaries, hiddenimports = [], [], []
 
 # scientific stack + pywebview — collect everything (submodules, data, compiled libs)
-for pkg in ("rdkit", "meeko", "openbabel", "gemmi", "scipy", "numpy", "webview"):
+for pkg in ("rdkit", "meeko", "openbabel", "gemmi", "scipy", "numpy", "webview",
+            "sklearn", "joblib", "networkx"):
     try:
         d, b, h = collect_all(pkg)
         datas += d; binaries += b; hiddenimports += h
@@ -43,13 +44,18 @@ hiddenimports += collect_submodules("uvicorn")
 hiddenimports += [
     "app", "ddsengine", "ddsengine.prep", "ddsengine.dock",
     "ddsengine.interactions", "ddsengine.analysis", "ddsengine.minimize",
-    "ddsengine.paths",
+    "ddsengine.paths", "ddsengine.covalent", "ddsengine.validate",
+    "ddsengine.netpharm", "ddsengine.pdbmap", "ddsengine.qsar",
 ]
 
 # app resources: built UI + the Vina binary for this OS
 datas += [("webdist", "webdist")]
 vina_name = "vina.exe" if sys.platform.startswith("win") else "vina"
 binaries += [("bin/%s" % vina_name, "bin")]
+
+# QSAR bundled reproducibility datasets (read at runtime by ddsengine.qsar)
+datas += [(f, "ddsengine/qsar_data")
+          for f in glob.glob(_os.path.join("ddsengine", "qsar_data", "*.csv"))]
 
 # bundle the AI key (.env is gitignored — key is inside the app, not the public source)
 if _os.path.exists(".env"):
@@ -88,7 +94,7 @@ if sys.platform == "darwin":
         bundle_identifier="za.ac.ukzn.drugdesignstudio",
         info_plist={
             "NSHighResolutionCapable": True,
-            "CFBundleShortVersionString": "1.0.0",
+            "CFBundleShortVersionString": "3.0.0",
             # WKWebView blocks the local http://127.0.0.1 UI without this → blank white window
             "NSAppTransportSecurity": {
                 "NSAllowsArbitraryLoads": True,
