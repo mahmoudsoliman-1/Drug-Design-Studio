@@ -1744,6 +1744,7 @@ function Modal({ children, onClose }) {
 /* ------------------------------------------------------------------ */
 const CITATION = 'Mahmoud E Soliman, Drug Design Studio (DDS): An all-in-one Cross-Platform for Covalent/Non-Covalent Docking, Covalent Binders Virtual Screening and Protein-Ligand interaction analysis - Under Review'
 const CITATION2 = 'Mahmoud E Soliman, Drug Design Suite (DDS) 2.0: A Unified Platform for Network Pharmacology Integrated with Docking and Virtual Screening Workflow for Covalent/Non-Covalent Binders - Under Review'
+const CITATION3 = 'Mahmoud E Soliman, Drug Design Studio (DDS) 3.0: A Streamlined QSAR, 3D-QSAR and Pharmacophore Modelling Platform Coupling Ligand-Based Activity Prediction to Covalent and Non-Covalent Structure-Based Discovery - Under Review'
 const CITATION_BIBTEX = `@article{soliman2026dds,
   author  = {Soliman, Mahmoud E.},
   title   = {Drug Design Studio (DDS): An All-in-One Cross-Platform for Covalent/Non-Covalent Docking, Covalent Binders Virtual Screening and Protein-Ligand Interaction Analysis},
@@ -1780,11 +1781,12 @@ function CiteModal({ onClose }) {
           <div>
             <div className="mb-1.5 flex items-center justify-between">
               <span className="text-[11px] font-semibold uppercase tracking-wide text-slate-500">References</span>
-              <CopyBtn active={copied === 'ref'} onClick={() => copy(`${CITATION}\n\n${CITATION2}`, 'ref')} />
+              <CopyBtn active={copied === 'ref'} onClick={() => copy(`${CITATION}\n\n${CITATION2}\n\n${CITATION3}`, 'ref')} />
             </div>
             <div className="space-y-2.5 rounded-xl bg-ink-900/70 p-4 text-[13px] leading-relaxed text-slate-200 ring-1 ring-ink-700/60">
               <div className="flex gap-2"><span className="font-semibold text-slate-500">1.</span><span>{CITATION}</span></div>
               <div className="flex gap-2"><span className="font-semibold text-slate-500">2.</span><span>{CITATION2}</span></div>
+              <div className="flex gap-2"><span className="font-semibold text-slate-500">3.</span><span>{CITATION3}</span></div>
             </div>
           </div>
 
