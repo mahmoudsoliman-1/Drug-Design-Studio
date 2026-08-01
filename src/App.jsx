@@ -3,7 +3,7 @@ import MoleculeViewer from './components/MoleculeViewer.jsx'
 import InteractionMap2D from './components/InteractionMap2D.jsx'
 import ExportModal from './components/ExportModal.jsx'
 import Ligand2D from './components/Ligand2D.jsx'
-import DocsModal, { DOC_VERSION } from './components/Documentation.jsx'
+import DocsModal, { DOC_VERSION, CiteModal } from './components/Documentation.jsx'
 import { saveFile } from './download.js'
 import { LIBRARY, ScreeningLibraryPanel, LibraryCenter, ScreeningResults } from './components/VirtualScreening.jsx'
 import * as api from './api.js'
@@ -1739,79 +1739,8 @@ function Modal({ children, onClose }) {
   )
 }
 
-/* ------------------------------------------------------------------ */
-/*  Cite DDS                                                          */
-/* ------------------------------------------------------------------ */
-const CITATION = 'Mahmoud E Soliman, Drug Design Studio (DDS): An all-in-one Cross-Platform for Covalent/Non-Covalent Docking, Covalent Binders Virtual Screening and Protein-Ligand interaction analysis - Under Review'
-const CITATION2 = 'Mahmoud E Soliman, Drug Design Suite (DDS) 2.0: A Unified Platform for Network Pharmacology Integrated with Docking and Virtual Screening Workflow for Covalent/Non-Covalent Binders - Under Review'
-const CITATION3 = 'Mahmoud E Soliman, Drug Design Studio (DDS) 3.0: A Streamlined QSAR, 3D-QSAR and Pharmacophore Modelling Platform Coupling Ligand-Based Activity Prediction to Covalent and Non-Covalent Structure-Based Discovery - Under Review'
-const CITATION_BIBTEX = `@article{soliman2026dds,
-  author  = {Soliman, Mahmoud E.},
-  title   = {Drug Design Studio (DDS): An All-in-One Cross-Platform for Covalent/Non-Covalent Docking, Covalent Binders Virtual Screening and Protein-Ligand Interaction Analysis},
-  note    = {Under review}
-}`
-
-function CiteModal({ onClose }) {
-  const [copied, setCopied] = useState('')
-  function copy(text, which) {
-    navigator.clipboard?.writeText(text).then(() => {
-      setCopied(which)
-      setTimeout(() => setCopied(''), 1800)
-    })
-  }
-  return (
-    <div className="fixed inset-0 z-50 grid place-items-center bg-ink-950/80 p-6 backdrop-blur-sm" onClick={onClose}>
-      <div className="glass relative w-full max-w-xl overflow-hidden rounded-2xl shadow-2xl" onClick={(e) => e.stopPropagation()}>
-        <button onClick={onClose}
-          className="absolute right-3 top-3 z-10 grid h-8 w-8 place-items-center rounded-lg bg-ink-800/80 text-slate-400 hover:bg-ink-700 hover:text-white">
-          <CloseIcon className="h-4 w-4" />
-        </button>
-
-        <div className="flex items-center gap-3 border-b border-ink-700/60 px-6 py-4">
-          <div className="grid h-10 w-10 place-items-center rounded-xl bg-accent/15">
-            <QuoteIcon className="h-5 w-5 text-accent" />
-          </div>
-          <div>
-            <h3 className="text-[15px] font-semibold text-white">Cite Drug Design Studio</h3>
-            <p className="text-[11px] text-slate-500">If DDS supported your research, please cite it.</p>
-          </div>
-        </div>
-
-        <div className="space-y-4 p-6">
-          <div>
-            <div className="mb-1.5 flex items-center justify-between">
-              <span className="text-[11px] font-semibold uppercase tracking-wide text-slate-500">References</span>
-              <CopyBtn active={copied === 'ref'} onClick={() => copy(`${CITATION}\n\n${CITATION2}\n\n${CITATION3}`, 'ref')} />
-            </div>
-            <div className="space-y-2.5 rounded-xl bg-ink-900/70 p-4 text-[13px] leading-relaxed text-slate-200 ring-1 ring-ink-700/60">
-              <div className="flex gap-2"><span className="font-semibold text-slate-500">1.</span><span>{CITATION}</span></div>
-              <div className="flex gap-2"><span className="font-semibold text-slate-500">2.</span><span>{CITATION2}</span></div>
-              <div className="flex gap-2"><span className="font-semibold text-slate-500">3.</span><span>{CITATION3}</span></div>
-            </div>
-          </div>
-
-          <div>
-            <div className="mb-1.5 flex items-center justify-between">
-              <span className="text-[11px] font-semibold uppercase tracking-wide text-slate-500">BibTeX</span>
-              <CopyBtn active={copied === 'bib'} onClick={() => copy(CITATION_BIBTEX, 'bib')} />
-            </div>
-            <pre className="overflow-auto rounded-xl bg-ink-900/70 p-4 font-mono text-[11.5px] leading-relaxed text-slate-300 ring-1 ring-ink-700/60">{CITATION_BIBTEX}</pre>
-          </div>
-        </div>
-      </div>
-    </div>
-  )
-}
-
-function CopyBtn({ active, onClick }) {
-  return (
-    <button onClick={onClick}
-      className={`flex items-center gap-1.5 rounded-lg px-2.5 py-1 text-[11px] font-medium transition
-        ${active ? 'bg-accent/15 text-accent' : 'bg-ink-800/70 text-slate-300 hover:bg-ink-700 hover:text-white'}`}>
-      {active ? <><CheckIcon className="h-3.5 w-3.5" /> Copied</> : <><CopyIcon className="h-3.5 w-3.5" /> Copy</>}
-    </button>
-  )
-}
+/* Cite DDS: uses the shared CiteModal from Documentation.jsx so the citation
+   design and references are unified across all DDS modules. */
 
 /* ------------------------------------------------------------------ */
 /*  Small UI atoms                                                    */
