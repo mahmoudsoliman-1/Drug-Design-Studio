@@ -988,6 +988,19 @@ def get_complex(complex_id: str):
 from fastapi.staticfiles import StaticFiles  # noqa: E402
 from ddsengine.paths import webdist_dir  # noqa: E402
 
+
+class _NoCacheStatic(StaticFiles):
+    """Serve the UI, but never let the WebView cache index.html — so after an app
+    update the fresh (content-hashed) JS/CSS is always loaded, not a stale copy.
+    Hashed assets keep normal caching (their filename changes when they change)."""
+    async def get_response(self, path, scope):
+        resp = await super().get_response(path, scope)
+        if path in ("", ".", "index.html") or path.endswith(".html") or \
+                (resp.media_type or "").startswith("text/html"):
+            resp.headers["Cache-Control"] = "no-store, must-revalidate"
+        return resp
+
+
 _WEB = webdist_dir()
 if os.path.isdir(_WEB):
-    app.mount("/", StaticFiles(directory=_WEB, html=True), name="web")
+    app.mount("/", _NoCacheStatic(directory=_WEB, html=True), name="web")
