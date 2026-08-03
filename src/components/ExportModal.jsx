@@ -315,11 +315,14 @@ function downloadText(filename, text, mime) {
 }
 
 function openPrint(html) {
-  const w = window.open('', '_blank')
-  if (!w) {
-    // native app (WKWebView) blocks pop-ups — save the HTML report to open & print in a browser
+  // native app (pywebview): window.open is unreliable, so save the report via the
+  // native bridge (opens & prints in a browser). Detect it up front, don't rely on
+  // window.open returning null.
+  if (typeof window !== 'undefined' && window.pywebview && window.pywebview.api) {
     return saveFile('DDS_report.html', html, 'text/html;charset=utf-8')
   }
+  const w = window.open('', '_blank')
+  if (!w) return saveFile('DDS_report.html', html, 'text/html;charset=utf-8')
   w.document.write(html)
   w.document.close()
   w.focus()

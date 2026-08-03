@@ -103,8 +103,9 @@ async function downloadZip(d) {
 /* ----------------------------- PDF report ----------------------------- */
 function openReport(d) {
   const html = buildReport(d)
+  if (typeof window !== 'undefined' && window.pywebview && window.pywebview.api) return saveFile(`DDS_netpharm_${d.slug}.html`, html, 'text/html;charset=utf-8')  // native app: save via bridge
   const w = window.open('', '_blank')
-  if (!w) return saveFile(`DDS_netpharm_${d.slug}.html`, html, 'text/html;charset=utf-8')  // WebView blocks pop-ups
+  if (!w) return saveFile(`DDS_netpharm_${d.slug}.html`, html, 'text/html;charset=utf-8')
   w.document.open(); w.document.write(html); w.document.close()
   setTimeout(() => { try { w.focus(); w.print() } catch { /* user can print manually */ } }, 400)
 }

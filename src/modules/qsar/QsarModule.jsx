@@ -838,8 +838,9 @@ function ReportModal({ dataset, result, task, descriptor, algo, design, onClose 
         <li>Pedregosa F, <i>et al.</i> Scikit-learn: Machine learning in Python. <i>J Mach Learn Res.</i> 2011;12:2825&ndash;2830.</li>
       </ol>
       </body></html>`
+    if (typeof window !== 'undefined' && window.pywebview && window.pywebview.api) { saveFile('DDS_qsar_report.html', html, 'text/html;charset=utf-8'); return }  // native app: save via bridge
     const w = window.open('', '_blank')
-    if (!w) { saveFile('DDS_qsar_report.html', html, 'text/html;charset=utf-8'); return }  // WebView blocks pop-ups
+    if (!w) { saveFile('DDS_qsar_report.html', html, 'text/html;charset=utf-8'); return }
     w.document.write(html); w.document.close(); w.print()
   }
   return (
