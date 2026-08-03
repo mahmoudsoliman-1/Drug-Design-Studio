@@ -45,12 +45,6 @@ export default function ModuleHub({ modules, onOpen, runningCount = 0 }) {
           {modules.map((m) => <ModuleCard key={m.id} m={m} onOpen={onOpen} />)}
         </div>
 
-        {/* roadmap */}
-        <div className="mt-3 flex items-center gap-2.5 rounded-xl border border-dashed border-ink-600/70 px-4 py-3">
-          <PlusIcon className="h-4 w-4 text-slate-500" />
-          <span className="text-[12px] text-slate-400">Further ahead — ADMET · pharmacophore · MD preparation</span>
-        </div>
-
         <div className="mt-auto pt-6 text-right text-[10px] text-slate-600">DDS v3.0.0</div>
       </div>
     </div>
@@ -119,7 +113,6 @@ function TargetIcon(p) { return I(p, <><circle cx="12" cy="12" r="8" /><circle c
 function NetworkIcon(p) { return I(p, <><circle cx="12" cy="5" r="2.2" /><circle cx="5" cy="18" r="2.2" /><circle cx="19" cy="18" r="2.2" /><circle cx="12" cy="12" r="2.2" /><path d="M12 7.2V9.8M10.4 13.4l-3.8 3M13.6 13.4l3.8 3" /></>) }
 function ChartIcon(p) { return I(p, <><circle cx="6" cy="17" r="1.6" /><circle cx="11" cy="9" r="1.6" /><circle cx="17" cy="13" r="1.6" /><circle cx="20" cy="6" r="1.6" /><path d="M4 20V4" /></>) }
 function ArrowIcon(p) { return I(p, <path d="M5 12h14M13 6l6 6-6 6" />) }
-function PlusIcon(p) { return I(p, <path d="M12 5v14M5 12h14" />) }
 function LockIcon(p) { return I(p, <><rect x="5" y="11" width="14" height="9" rx="2" /><path d="M8 11V8a4 4 0 018 0v3" /></>) }
 function OfflineIcon(p) { return I(p, <><path d="M12 20h.01M2 8.5a15 15 0 0120 0M5 12a10 10 0 0114 0M8.5 15.5a5 5 0 017 0" /><path d="M3 3l18 18" /></>) }
 function SpinIcon(p) { return I(p, <><path d="M12 3a9 9 0 109 9" /></>) }
