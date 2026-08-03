@@ -3,6 +3,7 @@ import * as api from '../../api.js'
 import Logo from '../../components/Logo.jsx'
 import DocsModal, { CiteModal } from '../../components/Documentation.jsx'
 import { ExportMenu, RawFigure } from './FigExport.jsx'
+import { saveFile } from '../../download.js'
 
 // QSAR / 3D-QSAR & Pharmacophore module — ligand-based modelling from RDKit +
 // scikit-learn (fast, offline, reliable). Guided 5-step workflow mirroring the
@@ -837,7 +838,9 @@ function ReportModal({ dataset, result, task, descriptor, algo, design, onClose 
         <li>Pedregosa F, <i>et al.</i> Scikit-learn: Machine learning in Python. <i>J Mach Learn Res.</i> 2011;12:2825&ndash;2830.</li>
       </ol>
       </body></html>`
-    const w = window.open('', '_blank'); if (w) { w.document.write(html); w.document.close(); w.print() }
+    const w = window.open('', '_blank')
+    if (!w) { saveFile('DDS_qsar_report.html', html, 'text/html;charset=utf-8'); return }  // WebView blocks pop-ups
+    w.document.write(html); w.document.close(); w.print()
   }
   return (
     <div className="fixed inset-0 z-50 grid place-items-center bg-ink-950/80 p-6 backdrop-blur-sm" onClick={onClose}>

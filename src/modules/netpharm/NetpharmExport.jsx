@@ -104,7 +104,7 @@ async function downloadZip(d) {
 function openReport(d) {
   const html = buildReport(d)
   const w = window.open('', '_blank')
-  if (!w) return
+  if (!w) return saveFile(`DDS_netpharm_${d.slug}.html`, html, 'text/html;charset=utf-8')  // WebView blocks pop-ups
   w.document.open(); w.document.write(html); w.document.close()
   setTimeout(() => { try { w.focus(); w.print() } catch { /* user can print manually */ } }, 400)
 }
