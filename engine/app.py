@@ -18,7 +18,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from typing import Optional, List
 
-from ddsengine import prep, dock, interactions, analysis, minimize, covalent, validate as validate_mod, netpharm, pdbmap, qsar
+from ddsengine import prep, dock, interactions, analysis, minimize, covalent, validate as validate_mod, netpharm, pdbmap, qsar, nanobio
 
 app = FastAPI(title="Drug Design Studio Engine", version="1.0.0")
 app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"])
@@ -222,6 +222,31 @@ class QsarDepictReq(BaseModel):
     legends: Optional[List[str]] = None
     pharmacophore: bool = True
     per_row: int = 4
+    base_color: Optional[str] = None
+
+
+class NanoRunReq(BaseModel):
+    compounds: List[str] = []
+    carrier: Optional[str] = None
+    n_poses: int = 8
+    ratio: str = "1:1"
+    thoroughness: str = "balanced"
+    solvent: str = "water"
+    label: Optional[str] = None
+
+
+class NanoValidateReq(BaseModel):
+    case: str
+    solvent: str = "water"
+
+
+class NanoStructureReq(BaseModel):
+    smiles: Optional[str] = None
+    carrier: Optional[str] = None
+
+
+class NanoIdentifyReq(BaseModel):
+    smiles: List[str] = []
 
 
 # --------------------------- AI (Groq / Llama) ---------------------------
@@ -342,6 +367,11 @@ def _summary(job):
             s["ligand"] = (r.get("properties") or {}).get("formula")
         elif job["kind"] == "netpharm":
             s["counts"] = r.get("counts")
+        elif job["kind"] == "nano":
+            loaded = r.get("loaded") or {}
+            asm = r.get("assembly") or {}
+            s["carrier"] = (r.get("carrier") or {}).get("name")
+            s["interaction_energy"] = loaded.get("interaction_energy") if loaded else asm.get("interaction_energy")
         else:
             rows = r.get("results", [])
             s["best_affinity"] = rows[0]["affinity"] if rows else None
@@ -638,6 +668,28 @@ def _run_qsar_build(jid):
     _save_job(job)
 
 
+def _run_nano(jid):
+    job = JOBS[jid]
+    r = job["request"]
+
+    def progress(pdb):
+        job["preview"] = pdb        # in-memory only; polled live via GET /api/job
+
+    try:
+        res = nanobio.run(r.get("compounds", []), carrier=r.get("carrier"),
+                          n_poses=r.get("n_poses", 8), ratio=r.get("ratio", "1:1"),
+                          thoroughness=r.get("thoroughness", "balanced"),
+                          solvent=r.get("solvent", "water"), progress=progress)
+        if res.get("error"):
+            job["status"] = "error"; job["error"] = res["error"]
+        else:
+            job["result"] = res; job["status"] = "done"
+    except Exception as e:
+        job["status"] = "error"; job["error"] = str(e)[:300]
+    job.pop("preview", None)        # clear the live frame once the result is ready
+    _save_job(job)
+
+
 # --------------------------- receptor helpers ---------------------------
 def _store_receptor(pdb_text, keep_waters=False, keep_ions=False, remove=None, rid=None, ph=7.4):
     rec_pdbqt, protein_pdb, display_pdb, ligand_pdb, meta = prep.prepare_receptor(
@@ -865,7 +917,48 @@ def qsar_design(req: QsarDesignReq):
 @app.post("/api/qsar/depict")
 def qsar_depict(req: QsarDepictReq):
     return qsar.depict_grid(req.smiles, legends=req.legends,
-                            pharmacophore=req.pharmacophore, per_row=req.per_row)
+                            pharmacophore=req.pharmacophore, per_row=req.per_row,
+                            base_color=req.base_color)
+
+
+@app.get("/api/nano/carriers")
+def nano_carriers():
+    return {"carriers": nanobio.carrier_catalog()}
+
+
+@app.get("/api/nano/validation-cases")
+def nano_validation_cases():
+    return {"cases": nanobio.validation_list()}
+
+
+@app.post("/api/nano/validate")
+def nano_validate(req: NanoValidateReq):
+    res = nanobio.run_validation(req.case, solvent=req.solvent)
+    if res.get("error"):
+        raise HTTPException(400, res["error"])
+    return res
+
+
+@app.post("/api/nano/structure")
+def nano_structure(req: NanoStructureReq):
+    res = nanobio.structure(smiles=req.smiles, carrier=req.carrier)
+    if res.get("error"):
+        raise HTTPException(400, res["error"])
+    return res
+
+
+@app.post("/api/nano/identify")
+def nano_identify(req: NanoIdentifyReq):
+    return nanobio.identify(req.smiles)
+
+
+@app.post("/api/nano/run")
+def nano_run(req: NanoRunReq):
+    label = req.label or "Nano bio-pharmaceutical modelling"
+    job = _new_job("nano", label, req.dict(), None)
+    _save_job(job)
+    EXECUTOR.submit(_run_nano, job["job_id"])
+    return {"job_id": job["job_id"]}
 
 
 @app.post("/api/netpharm/run")
@@ -988,6 +1081,19 @@ def get_complex(complex_id: str):
 from fastapi.staticfiles import StaticFiles  # noqa: E402
 from ddsengine.paths import webdist_dir  # noqa: E402
 
+
+class _NoCacheStatic(StaticFiles):
+    """Serve the UI, but never let the WebView cache index.html — so after an app
+    update the fresh (content-hashed) JS/CSS is always loaded, not a stale copy.
+    Hashed assets keep normal caching (their filename changes when they change)."""
+    async def get_response(self, path, scope):
+        resp = await super().get_response(path, scope)
+        if path in ("", ".", "index.html") or path.endswith(".html") or \
+                (resp.media_type or "").startswith("text/html"):
+            resp.headers["Cache-Control"] = "no-store, must-revalidate"
+        return resp
+
+
 _WEB = webdist_dir()
 if os.path.isdir(_WEB):
-    app.mount("/", StaticFiles(directory=_WEB, html=True), name="web")
+    app.mount("/", _NoCacheStatic(directory=_WEB, html=True), name="web")

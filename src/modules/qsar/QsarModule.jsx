@@ -3,6 +3,7 @@ import * as api from '../../api.js'
 import Logo from '../../components/Logo.jsx'
 import DocsModal, { CiteModal } from '../../components/Documentation.jsx'
 import { ExportMenu, RawFigure } from './FigExport.jsx'
+import { saveFile } from '../../download.js'
 
 // QSAR / 3D-QSAR & Pharmacophore module — ligand-based modelling from RDKit +
 // scikit-learn (fast, offline, reliable). Guided 5-step workflow mirroring the
@@ -254,7 +255,7 @@ export default function QsarModule({ onSwitchModules, onHandoff }) {
           <button onClick={() => setCite(true)} className="flex w-full items-center gap-2 rounded-lg px-2.5 py-1.5 text-left text-slate-300 transition hover:bg-ink-800/70 hover:text-white">
             <QuoteIcon className="h-4 w-4" color={S} /><span className="text-[12px] font-medium">Cite DDS</span>
           </button>
-          <div className="mt-1.5 px-2.5 text-[10px] text-slate-600">DDS v3.0.0 · QSAR</div>
+          <div className="mt-1.5 px-2.5 text-[10px] text-slate-600">DDS v4.0.0 · QSAR</div>
         </div>
       </div>
 
@@ -819,7 +820,7 @@ function ReportModal({ dataset, result, task, descriptor, algo, design, onClose 
       th{background:#eef2f7} .note{background:#fff8e1;border:1px solid #f0d98a;border-radius:6px;padding:10px 14px;color:#5b4a00;font-size:12px}
     </style></head><body>
       <h1>QSAR / 3D-QSAR Model &amp; Design Report</h1>
-      <div>Drug Design Studio (DDS) 3.0 · ligand-based modelling (RDKit + scikit-learn)</div>
+      <div>Drug Design Studio (DDS) 4.0 · ligand-based modelling (RDKit + scikit-learn)</div>
       <p class="note">This report is intended as guidance for your write-up. Please do not copy it verbatim — rephrase the findings in your own words, and review every predicted candidate before committing to synthesis.</p>
       <h2>1. Dataset</h2><p>${dataset.name} — ${dataset.smiles.length} molecules · task: ${task}.</p>
       <h2>2. Model</h2><p>Descriptor: ${descriptor}; algorithm: ${algo.toUpperCase()}; split: ${result.split}; 5-fold cross-validation; train ${result.n_train} / test ${result.n_test} molecules.${imp ? ` Most influential descriptors: ${imp}.` : ''}</p>
@@ -837,7 +838,10 @@ function ReportModal({ dataset, result, task, descriptor, algo, design, onClose 
         <li>Pedregosa F, <i>et al.</i> Scikit-learn: Machine learning in Python. <i>J Mach Learn Res.</i> 2011;12:2825&ndash;2830.</li>
       </ol>
       </body></html>`
-    const w = window.open('', '_blank'); if (w) { w.document.write(html); w.document.close(); w.print() }
+    if (typeof window !== 'undefined' && window.pywebview && window.pywebview.api) { saveFile('DDS_qsar_report.html', html, 'text/html;charset=utf-8'); return }  // native app: save via bridge
+    const w = window.open('', '_blank')
+    if (!w) { saveFile('DDS_qsar_report.html', html, 'text/html;charset=utf-8'); return }
+    w.document.write(html); w.document.close(); w.print()
   }
   return (
     <div className="fixed inset-0 z-50 grid place-items-center bg-ink-950/80 p-6 backdrop-blur-sm" onClick={onClose}>

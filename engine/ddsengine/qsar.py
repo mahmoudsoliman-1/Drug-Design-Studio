@@ -126,11 +126,15 @@ def scaffold_split(smiles_list, test_frac=0.2, seed=42):
 # --------------------------------------------------------------------------
 def _make_model(task, algo, n_samples):
     if task == "regression":
-        return {"rf": RandomForestRegressor(n_estimators=200, random_state=42, n_jobs=-1),
+        # n_jobs=1: keep RandomForest single-process. With n_jobs=-1 sklearn uses joblib's
+        # loky backend, which spawns worker subprocesses; in the windowed Windows build each
+        # worker relaunches the frozen exe and flashes a console window. Datasets are small,
+        # so single-process training costs nothing noticeable.
+        return {"rf": RandomForestRegressor(n_estimators=200, random_state=42, n_jobs=1),
                 "gbm": GradientBoostingRegressor(random_state=42),
                 "svm": SVR(C=10, gamma="scale"),
                 "pls": PLSRegression(n_components=min(5, max(1, n_samples // 10)))}[algo]
-    return {"rf": RandomForestClassifier(n_estimators=200, random_state=42, n_jobs=-1, class_weight="balanced"),
+    return {"rf": RandomForestClassifier(n_estimators=200, random_state=42, n_jobs=1, class_weight="balanced"),
             "gbm": GradientBoostingClassifier(random_state=42),
             "svm": SVC(C=10, gamma="scale", probability=True, class_weight="balanced"),
             "logreg": LogisticRegression(max_iter=2000, class_weight="balanced")}[algo]
@@ -266,9 +270,20 @@ def pharmacophore_legend():
             for lab, c in _PH_LEGEND]
 
 
-def depict_grid(smiles, legends=None, pharmacophore=True, per_row=4, cell=250, max_n=24):
+def _hex_rgb(h):
+    h = (h or "").lstrip("#")
+    if len(h) != 6:
+        return None
+    return (int(h[0:2], 16) / 255.0, int(h[2:4], 16) / 255.0, int(h[4:6], 16) / 255.0)
+
+
+def depict_grid(smiles, legends=None, pharmacophore=True, per_row=4, cell=250, max_n=24, base_color=None):
     """Render a grid of 2D structures as a single SVG, optionally highlighting
-    pharmacophore features (H-bond donor/acceptor, aromatic, hydrophobic, charged)."""
+    pharmacophore features (H-bond donor/acceptor, aromatic, hydrophobic, charged).
+
+    `base_color` (hex) recolours the carbon skeleton, bonds and legend to a single
+    tone that stays legible on both light and dark backgrounds; heteroatoms keep
+    their standard vivid colours. Leave it unset for the classic black-on-white look."""
     from rdkit.Chem.Draw import rdMolDraw2D
     from rdkit.Chem import rdDepictor
     factory = _pharm_factory() if pharmacophore else None
@@ -294,6 +309,19 @@ def depict_grid(smiles, legends=None, pharmacophore=True, per_row=4, cell=250, m
     o.clearBackground = False
     o.legendFontSize = 15
     o.legendFraction = 0.16
+    rgb = _hex_rgb(base_color)
+    if rgb:
+        # recolour carbon (6) and any element without a set colour (-1) to the tone;
+        # heteroatoms keep their palette entries (O red, N blue, …). Bonds follow atoms.
+        try:
+            o.updateAtomPalette({6: rgb, -1: rgb})
+        except Exception:
+            pass
+        for attr in ("legendColour", "symbolColour"):
+            try:
+                setattr(o, attr, rgb)
+            except Exception:
+                pass
     if pharmacophore:
         d.DrawMolecules(mols, legends=labs, highlightAtoms=hi_atoms, highlightAtomColors=hi_colors)
     else:

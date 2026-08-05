@@ -198,3 +198,27 @@ export function qsarDesign(payload) {
 export function qsarDepict(payload) {
   return post('/api/qsar/depict', payload)
 }
+
+// --------------------------- nano bio-pharmaceutical ---------------------------
+export function nanoCarriers() {
+  return call('/api/nano/carriers')
+}
+export function nanoValidationCases() {
+  return call('/api/nano/validation-cases')
+}
+export function nanoValidate(caseId, solvent = 'water') {
+  return post('/api/nano/validate', { case: caseId, solvent })
+}
+export function nanoRun(payload) {
+  return post('/api/nano/run', payload)
+}
+export function nanoStructure({ smiles, carrier }) {
+  return post('/api/nano/structure', { smiles, carrier })
+}
+export function nanoIdentify(smiles) {
+  return post('/api/nano/identify', { smiles })
+}
+export function nanoDepict(smiles, legends) {
+  // slate base tone: legible on both the dark app UI and a white export background
+  return post('/api/qsar/depict', { smiles, legends, pharmacophore: true, per_row: Math.min(smiles.length || 1, 3), base_color: '#64748b' })
+}

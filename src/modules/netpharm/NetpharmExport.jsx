@@ -103,8 +103,9 @@ async function downloadZip(d) {
 /* ----------------------------- PDF report ----------------------------- */
 function openReport(d) {
   const html = buildReport(d)
+  if (typeof window !== 'undefined' && window.pywebview && window.pywebview.api) return saveFile(`DDS_netpharm_${d.slug}.html`, html, 'text/html;charset=utf-8')  // native app: save via bridge
   const w = window.open('', '_blank')
-  if (!w) return
+  if (!w) return saveFile(`DDS_netpharm_${d.slug}.html`, html, 'text/html;charset=utf-8')
   w.document.open(); w.document.write(html); w.document.close()
   setTimeout(() => { try { w.focus(); w.print() } catch { /* user can print manually */ } }, 400)
 }
@@ -121,7 +122,7 @@ function buildReport(d) {
   const libs = Object.keys(params?.libs || {}).filter((x) => params.libs[x])
   const sec = []
 
-  sec.push(`<h2>1. Summary</h2><p>This report describes a network-pharmacology analysis linking
+  sec.push(`<h2>1. Summary</h2><p>This report describes a network-pharmacology<sup>4</sup> analysis linking
     <b>${esc(d.compoundLabel)}</b> to <b>${esc(d.diseaseLabel)}</b>. Compound targets and disease-associated
     genes were assembled, their shared targets identified, a protein–protein interaction (PPI) network
     constructed, hub genes ranked, and functional enrichment computed. ${result ? `The intersection yielded
@@ -129,13 +130,13 @@ function buildReport(d) {
     <b>${result.counts.edges}</b> edges, and the top hub genes below.` : ''}</p>`)
 
   sec.push(`<h2>2. Methods &amp; protocol</h2>
-    <p>Drug Design Studio (DDS)<sup>10&ndash;12</sup> was used to retrieve and assemble the compound and disease targets, identify their shared targets, construct and analyse the protein&ndash;protein interaction network, rank the hub genes, and perform the functional enrichment analysis reported here.</p>
+    <p>Drug Design Studio (DDS)<sup>1&ndash;3</sup> was used to retrieve and assemble the compound and disease targets, identify their shared targets, construct and analyse the protein&ndash;protein interaction network, rank the hub genes, and perform the functional enrichment analysis reported here.</p>
     <p><b>Compound targets.</b> ${d.multiCompound ? 'Multiple compounds were queried and their predicted/known targets <b>pooled (union)</b>, each target tagged with the number of compounds engaging it.' : 'Targets were retrieved for the compound.'}
-    Targets came from DGIdb (curated drug–gene interactions) and ChEMBL (measured bioactivity), mapped to a 0–1 confidence and de-duplicated to official gene symbols.</p>
+    Targets came from DGIdb (curated drug–gene interactions)<sup>7</sup> and ChEMBL (measured bioactivity)<sup>8</sup>, mapped to a 0–1 confidence and de-duplicated to official gene symbols.</p>
     <p><b>Disease targets.</b> ${d.multiDisease ? 'Multiple diseases were queried and their <b>common (intersection)</b> genes taken as the disease target set (shared/comorbid mechanism).' : 'Disease-associated genes were retrieved and ranked by association score.'}
-    Sources: Open Targets (evidence-scored) and CTD, unioned with any user-supplied list.</p>
-    <p><b>Network &amp; hubs.</b> Shared targets (compound ∩ disease) were submitted to STRING (confidence ≥ ${params?.confidence ?? '0.4'}) to build the PPI network; hub genes were ranked by ${esc(params?.centrality || 'MCC')} centrality (cytoHubba-style) using NetworkX.</p>
-    <p><b>Enrichment.</b> Gene-set over-representation was computed with Enrichr for: ${libs.map((l) => esc(LIB_NAMES[l] || l)).join(', ') || '—'}.</p>
+    Sources: Open Targets (evidence-scored)<sup>5</sup> and CTD<sup>6</sup>, unioned with any user-supplied list.</p>
+    <p><b>Network &amp; hubs.</b> Shared targets (compound ∩ disease) were submitted to STRING (confidence ≥ ${params?.confidence ?? '0.4'})<sup>9</sup> to build the PPI network; hub genes were ranked by ${esc(params?.centrality || 'MCC')} centrality (cytoHubba-style)<sup>10</sup> using NetworkX<sup>11</sup>.</p>
+    <p><b>Enrichment.</b> Gene-set over-representation was computed with Enrichr<sup>12</sup> for: ${libs.map((l) => esc(LIB_NAMES[l] || l)).join(', ') || '—'}.</p>
     <p style="color:#555"><i>All computations are illustrative of the software's output; results reflect the state of the underlying public databases at ${esc(date)}.</i></p>`)
 
   // disease
@@ -179,6 +180,9 @@ function buildReport(d) {
   }
 
   sec.push(`<h2>References</h2><ol class="refs">
+    <li>Mahmoud E. Soliman. Drug Design Studio (DDS): An all-in-one cross-platform for covalent/non-covalent docking, covalent binders virtual screening and protein–ligand interaction analysis. <i>(Under review).</i></li>
+    <li>Mahmoud E. Soliman. Drug Design Suite (DDS) 2.0: A Unified Platform for Network Pharmacology Integrated with Docking and Virtual Screening Workflow for Covalent/Non-Covalent Binders. <i>(Under review).</i></li>
+    <li>Mahmoud E. Soliman. Drug Design Studio (DDS) 3.0: A Streamlined QSAR, 3D-QSAR and Pharmacophore Modelling Platform Coupling Ligand-Based Activity Prediction to Covalent and Non-Covalent Structure-Based Discovery. <i>(Under review).</i></li>
     <li>Hopkins AL. Network pharmacology: the next paradigm in drug discovery. <i>Nat Chem Biol</i> 2008;4:682–90.</li>
     <li>Ochoa D, et al. The Open Targets Platform. <i>Nucleic Acids Res</i> 2023;51:D1353–9.</li>
     <li>Davis AP, et al. Comparative Toxicogenomics Database (CTD). <i>Nucleic Acids Res</i> 2023;51:D1257–62.</li>
@@ -188,9 +192,6 @@ function buildReport(d) {
     <li>Chin CH, et al. cytoHubba: identifying hub objects and sub-networks. <i>BMC Syst Biol</i> 2014;8(S4):S11.</li>
     <li>Hagberg AA, et al. Exploring network structure with NetworkX. <i>Proc. SciPy</i> 2008:11–15.</li>
     <li>Kuleshov MV, et al. Enrichr. <i>Nucleic Acids Res</i> 2016;44:W90–7.</li>
-    <li>Mahmoud E. Soliman. Drug Design Studio (DDS): An all-in-one cross-platform for covalent/non-covalent docking, covalent binders virtual screening and protein–ligand interaction analysis. <i>(Under review).</i></li>
-    <li>Mahmoud E. Soliman. Drug Design Suite (DDS) 2.0: A Unified Platform for Network Pharmacology Integrated with Docking and Virtual Screening Workflow for Covalent/Non-Covalent Binders. <i>(Under review).</i></li>
-    <li>Mahmoud E. Soliman. Drug Design Studio (DDS) 3.0: A Streamlined QSAR, 3D-QSAR and Pharmacophore Modelling Platform Coupling Ligand-Based Activity Prediction to Covalent and Non-Covalent Structure-Based Discovery. <i>(Under review).</i></li>
   </ol>`)
 
   return `<!doctype html><html><head><meta charset="utf-8"><title>Network Pharmacology Report — ${esc(d.title)}</title>

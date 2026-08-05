@@ -8,6 +8,7 @@ import VennDiagram from './VennDiagram.jsx'
 import DiseaseVenn from './DiseaseVenn.jsx'
 import CTPNetwork from './CTPNetwork.jsx'
 import KeggFigure from './KeggFigure.jsx'
+import { CURCUMIN_TARGETS, TNBC_TARGETS } from './curcuminBenchmark.js'
 import GoFigure from './GoFigure.jsx'
 import HubStructures from './HubStructures.jsx'
 import NetpharmExport from './NetpharmExport.jsx'
@@ -154,8 +155,15 @@ export default function NetPharmModule({ onSwitchModules, onHandoff }) {
     } catch (e) { setError(engErr(e)) } finally { setCLoading(false) }
   }
   function loadCaseStudy() {
+    // Benchmark reproduction of Deng et al. 2022 (curcumin × TNBC). The study's own
+    // target sets are supplied via the upload fields and the external databases are
+    // switched off, so the built-in case reproduces the published analysis exactly:
+    // the 117 curcumin targets ∩ 2057 TNBC targets give the 40 shared genes whose
+    // STRING/cytoHubba-MCC hub ranking recovers 8 of the 10 reported hub genes.
     setDisease('triple-negative breast cancer'); setCompound('curcumin')
-    setDSources({ opentargets: true, ctd: false }); setCSources({ dgidb: true, chembl: true })
+    setDSources({ opentargets: false, ctd: false }); setCSources({ dgidb: false, chembl: false })
+    setDUpload(TNBC_TARGETS); setCUpload(CURCUMIN_TARGETS)
+    setCentrality('mcc'); setTopn(10); setConfidence(0.4)
     setDMinScore(0); setCMinScore(0); setDCovOnly(false); setCCovOnly(false); setDMutOnly(false); setStep('disease')
   }
   // wipe the whole workspace back to a clean slate for a fresh analysis
@@ -248,7 +256,7 @@ export default function NetPharmModule({ onSwitchModules, onHandoff }) {
             <QuoteIcon className="h-4 w-4 text-violet" />
             <span className="text-[12px] font-medium">Cite DDS</span>
           </button>
-          <div className="mt-1.5 px-2.5 text-[10px] text-slate-600">DDS v3.0.0</div>
+          <div className="mt-1.5 px-2.5 text-[10px] text-slate-600">DDS v4.0.0</div>
         </div>
       </div>
 

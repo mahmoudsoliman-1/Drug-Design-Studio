@@ -15,6 +15,7 @@
 import DockingModule from '../App.jsx'
 import NetPharmModule from './netpharm/NetPharmModule.jsx'
 import QsarModule from './qsar/QsarModule.jsx'
+import NanoBioModule from './nanobio/NanoBioModule.jsx'
 
 export const MODULES = [
   {
@@ -47,6 +48,16 @@ export const MODULES = [
     status: 'ready',
     component: QsarModule,
   },
+  {
+    id: 'nanobio',
+    name: 'Nano bio-pharmaceutical modelling',
+    blurb: 'Co-formulate 2–3 drugs and load them onto nanocarriers — cyclodextrins, dendrimers, polymers, lipids.',
+    tags: ['Co-formulation', 'Nanocarriers', 'MMFF94'],
+    icon: 'flask',
+    accent: 'nano',
+    status: 'ready',
+    component: NanoBioModule,
+  },
 ]
 
 export function findModule(id) {
@@ -63,4 +74,5 @@ export const ACCENTS = {
   dock: { color: '#2dd4bf', soft: 'rgba(45,212,191,0.14)', text: '#2dd4bf' },
   net: { color: '#a78bfa', soft: 'rgba(167,139,250,0.15)', text: '#c4b5fd' },
   qsar: { color: '#38bdf8', soft: 'rgba(56,189,248,0.14)', text: '#7dd3fc' },
+  nano: { color: '#fb923c', soft: 'rgba(251,146,60,0.14)', text: '#fdba74' },
 }
