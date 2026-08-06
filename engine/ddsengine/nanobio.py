@@ -309,64 +309,151 @@ def _pair_complex(host, guest, place, seed):
     return combo, hc, gc, dE
 
 
-def dock(host, guest, n_poses=8, into_cavity=True, progress=None):
-    """Orientational/positional search of `guest` against `host`, returning the
-    best complex and the split host/guest at that geometry.
+# -------------------------------------------------- basin-hopping (MC) pose search
+def _axis_angle(axis, angle):
+    """Rotation matrix for a rotation of `angle` rad about `axis` (Rodrigues)."""
+    ax = np.asarray(axis, float); n = np.linalg.norm(ax)
+    if n < 1e-9:
+        return np.eye(3)
+    x, y, z = ax / n
+    c, s, C = np.cos(angle), np.sin(angle), 1.0 - np.cos(angle)
+    return np.array([[c + x * x * C, x * y * C - z * s, x * z * C + y * s],
+                     [y * x * C + z * s, c + y * y * C, y * z * C - x * s],
+                     [z * x * C - y * s, z * y * C + x * s, c + z * z * C]])
 
-    For cavity hosts (cyclodextrins) the guest is seeded along the cavity axis at
-    several depths so it can thread into the pocket, and poses are selected with a
-    mild preference for burial (an implicit-solvent-like proxy for the hydrophobic
-    inclusion that drives these complexes in water — gas-phase MMFF alone under-
-    weights it). The reported energy is always the raw MMFF interaction energy.
 
-    If `progress` is given, the minimised complex from each placement is streamed
-    to it, so the live view shows the search sampling poses as it runs."""
-    hp = _positions(host)
-    site = hp.mean(0)
+def _rigid_perturb(pos, trans_step, rot_step, rng):
+    """One elementary Monte-Carlo move: a small Gaussian rigid-body rotation of the
+    guest about its own centroid (scale `rot_step`, rad) plus a small Gaussian
+    translation (scale `trans_step`, Å)."""
+    c = pos.mean(0)
+    R = _axis_angle(rng.randn(3), rng.normal(0.0, rot_step))
+    return (pos - c) @ R.T + c + rng.normal(0.0, trans_step, 3)
+
+
+def _minimize_from_guest(host, guest, gpos, into_cavity, maxits=1000):
+    """MMFF-minimise the host+guest assembly for a guest positioned at `gpos`, and
+    return a pose dict (interaction energy, burial, score, split geometries). A light
+    `maxits` is used inside the basin-hopping loop (many evaluations); the winning pose
+    is re-minimised tightly before it is returned."""
+    g = Chem.Mol(guest); _set_positions(g, gpos)
+    combo = Chem.CombineMols(host, g); Chem.SanitizeMol(combo)
+    ff = _combined_ff(combo); ff.Minimize(maxIts=maxits); Ec = ff.CalcEnergy()
+    nH = host.GetNumAtoms()
+    p = combo.GetConformer().GetPositions()
+    hc = Chem.Mol(host); _set_positions(hc, p[:nH])
+    gc = Chem.Mol(guest); _set_positions(gc, p[nH:])
+    dE = Ec - _energy(hc) - _energy(gc)
+    inside = _guest_inside(hc, gc)
+    score = dE - (12.0 * inside if into_cavity else 0.0)       # reward cavity burial
+    return {"complex": combo, "host": hc, "guest": gc, "gpos": p[nH:],
+            "dE": float(round(dE, 2)), "inside": inside, "score": float(score)}
+
+
+def _seed_pose(host, guest, center, into_cavity, rng):
+    """One random-orientation seed: place the guest at `center` in a random orientation
+    and light-minimise it (a coarse-scan local minimum)."""
+    pos = _positions(guest); pos = pos - pos.mean(0)
+    pos = pos @ _rand_rotation(int(rng.randint(1, 2 ** 31 - 1))).T
+    pos = pos + (np.asarray(center, float) - pos.mean(0))
+    return _minimize_from_guest(host, guest, pos, into_cavity, maxits=1000)
+
+
+def _hop_chain(host, guest, init, into_cavity, n_hops, kT, rng, progress):
+    """Basin-hopping (Monte-Carlo-minimisation) chain from an already-minimised pose
+    `init`: repeatedly perturb the current accepted pose by a rigid-body move, MMFF-
+    minimise, and accept or reject the new local minimum by the Metropolis criterion at
+    temperature kT (Li & Scheraga 1987; Wales & Doye 1997). The lowest-score pose over
+    the chain is returned. Step size adapts toward ~50% acceptance."""
+    cur = best = init
+    trans, rot, acc, win = 1.2, 0.6, 0, 0
+    for _ in range(int(n_hops)):
+        pose = _minimize_from_guest(
+            host, guest, _rigid_perturb(cur["gpos"], trans, rot, rng), into_cavity, maxits=900)
+        if progress is not None:
+            try: progress(Chem.MolToPDBBlock(pose["complex"]))
+            except Exception: pass
+        d = pose["score"] - cur["score"]
+        if d <= 0 or rng.random_sample() < np.exp(-d / max(kT, 1e-6)):   # Metropolis
+            cur = pose; acc += 1
+        if pose["score"] < best["score"]:
+            best = pose
+        win += 1
+        if win == 5:                                          # adapt step size
+            trans *= 1.15 if acc > 2 else 0.85
+            rot = min(rot * (1.15 if acc > 2 else 0.85), 1.2)
+            trans = float(np.clip(trans, 0.2, 3.0)); acc = win = 0
+    return best
+
+
+def dock(host, guest, n_poses=8, into_cavity=True, progress=None, kT=2.0):
+    """Global orientational/positional search of `guest` against `host` by random-restart
+    plus basin-hopping (Monte-Carlo minimisation); returns the best complex and the split
+    host/guest.
+
+    Stage 1 — coarse scan: `n_scan` random-orientation seeds are placed at geometry-aware
+    centres (cavity hosts along the cavity/symmetry axis at several depths so the guest can
+    thread the pocket; non-cavity hosts just outside the host silhouette along the principal
+    axes — face normals → π-stacking, radial → sidewall contact) and each is MMFF-minimised,
+    giving broad coverage of orientational space. Stage 2 — refinement: the best `n_refine`
+    seeds are each refined by a basin-hopping chain (rigid-body perturbation + MMFF local
+    minimisation + Metropolis acceptance at temperature kT, adaptive step size), and the
+    global-best pose is re-minimised tightly. Poses are scored by the MMFF interaction energy
+    with a mild burial preference for cavity hosts (a proxy for the hydrophobic inclusion that
+    drives these complexes in water). Deterministic (seed 0).
+
+    The budget is regime-dependent: cavity inclusion is orientation-limited (finding a
+    threaded start), so it uses many random-restart seeds and light refinement; surface/tube
+    adsorption is settling-limited (relaxing a guest flat onto the surface), so it uses fewer
+    seeds but longer basin-hopping chains. `progress`, if given, streams every minimised
+    complex to the live view."""
+    if into_cavity:                                   # orientation-limited → more restarts
+        n_scan, n_hops, n_refine = max(30, 5 * int(n_poses)), max(6, int(n_poses)), 2
+    else:                                             # settling-limited → longer hop chains
+        n_scan, n_hops, n_refine = max(10, 2 * int(n_poses)), max(16, 3 * int(n_poses)), 3
+    hp = _positions(host); site = hp.mean(0)
     _, _, Vt = np.linalg.svd(hp - site)
-    axis = Vt[-1]                                   # symmetry (cavity) axis of a flat torus
     rng = np.random.RandomState(0)
-    poses, s = [], 0
 
-    # Build the list of starting positions. Cavity hosts: seed along the cavity axis
-    # at several depths so the guest threads the pocket. Non-cavity hosts (surfaces,
-    # tubes, chains, sheets): seed the guest just OUTSIDE the host silhouette along a
-    # spread of directions — the face normal (both sides) for a flat sheet gives
-    # π-stacking, radial directions give nanotube sidewall contact — with tangential
-    # jitter so different spots on the surface are sampled. Seeding at the centroid
-    # would embed a guest inside an extended host and clash.
-    places = []
+    centres = []
     if into_cavity:
-        for d in (0.0, 2.0, -2.0):
-            for _ in range(max(3, n_poses)):
-                places.append(site + axis * d)
+        axis = Vt[-1]                                   # cavity/symmetry axis
+        centres = [site + axis * d for d in (0.0, 2.0, -2.0)]
     else:
-        base = [Vt[2], -Vt[2], Vt[1], -Vt[1], Vt[0], -Vt[0]]
-        for k in range(max(6, n_poses)):
-            u = base[k % len(base)].astype(float) + rng.uniform(-0.25, 0.25, 3)
-            u /= (np.linalg.norm(u) + 1e-9)
-            ext = float(np.max((hp - site) @ u))            # host silhouette along u
-            jit = rng.uniform(-2.5, 2.5, 3); jit -= (jit @ u) * u   # keep jitter tangential
-            places.append(site + u * (ext + 3.2) + jit)
+        for f in [Vt[2], -Vt[2], Vt[1], -Vt[1]]:
+            u = f.astype(float); u /= (np.linalg.norm(u) + 1e-9)
+            ext = float(np.max((hp - site) @ u))        # host silhouette along u
+            centres.append(site + u * (ext + 3.2))
 
-    for place in places:
-        s += 1
+    # stage 1: coarse random-orientation scan for broad orientational coverage
+    scan = []
+    for i in range(n_scan):
+        c = centres[i % len(centres)]
+        if not into_cavity:
+            c = c + rng.uniform(-2.0, 2.0, 3)           # tangential jitter over the surface
         try:
-            combo, hc, gc, dE = _pair_complex(host, guest, place, seed=s)
+            scan.append(_seed_pose(host, guest, c, into_cavity, rng))
         except Exception:
             continue
-        if progress is not None:
-            try: progress(Chem.MolToPDBBlock(combo))
-            except Exception: pass
-        inside = _guest_inside(hc, gc)
-        score = dE - (12.0 * inside if into_cavity else 0.0)   # reward cavity burial
-        poses.append({"complex": combo, "host": hc, "guest": gc,
-                      "dE": float(round(dE, 2)), "inside": inside, "score": score,
-                      "place": [float(x) for x in place], "seed": s})
-    if not poses:
+    if not scan:
         return None
-    poses.sort(key=lambda p: p["score"])
-    return poses[0]
+    scan.sort(key=lambda p: p["score"])
+
+    # stage 2: basin-hopping refinement of the best seeds
+    best = scan[0]
+    for init in scan[:max(1, n_refine)]:
+        try:
+            cand = _hop_chain(host, guest, init, into_cavity, n_hops, kT, rng, progress)
+        except Exception:
+            continue
+        if cand["score"] < best["score"]:
+            best = cand
+    best = _minimize_from_guest(host, guest, best["gpos"], into_cavity, maxits=1500)  # tight polish
+    best.pop("gpos", None)
+    best["score"] = float(round(best["score"], 2))
+    best["place"] = [float(x) for x in _centroid(best["guest"])]
+    best["seed"] = 0
+    return best
 
 
 def _merge(mols):
@@ -397,17 +484,26 @@ def method_info(thoroughness="balanced", solvent="water", into_cavity=True):
     """Machine- and human-readable description of the exact protocol + parameters,
     for the UI 'Method' popover, the documentation and the exported report."""
     t = THOROUGHNESS.get(thoroughness, THOROUGHNESS["balanced"])
-    depths = 3 if into_cavity else 1
-    rots = max(3, t["n_poses"])
+    if into_cavity:
+        n_scan, n_hops, n_refine = max(30, 5 * t["n_poses"]), max(6, t["n_poses"]), 2
+    else:
+        n_scan, n_hops, n_refine = max(10, 2 * t["n_poses"]), max(16, 3 * t["n_poses"]), 3
+    per_conf = n_scan + n_refine * n_hops
     return {
         "thoroughness": t["label"],
         "conformer_engine": "RDKit ETKDGv3",
         "conformers": t["n_confs"],
-        "orientations_per_conformer": rots * depths,
-        "total_placements": t["n_confs"] * rots * depths,
+        "search_method": "Random-restart + basin-hopping (Monte-Carlo minimisation): "
+                         "coarse random-orientation scan then rigid-body perturbation, "
+                         "MMFF local minimisation and Metropolis acceptance",
+        "scan_seeds_per_conformer": n_scan,
+        "refined_seeds": n_refine,
+        "mc_steps_per_refined_seed": n_hops,
+        "orientations_per_conformer": per_conf,
+        "total_placements": t["n_confs"] * per_conf,
         "force_field": "MMFF94 (UFF fallback)",
         "minimization": "gradient minimisation to convergence (≤2000 iters), inter-fragment non-bonded terms included",
-        "selection": "lowest MMFF interaction energy with a burial preference for cavity hosts",
+        "selection": "global-minimum MMFF interaction energy over the basin-hopping search, with a burial preference for cavity hosts",
         "solvent_model": "Implicit water (ε=%.1f dielectric screening + %.4f kcal/mol·Å² SASA non-polar term)" % (WATER_EPS, SASA_GAMMA)
                          if solvent == "water" else "Gas phase (unscreened MMFF)",
     }
@@ -669,11 +765,26 @@ def _assemble_compounds(smiles_list, n_poses=6):
 
 
 def _guest_inside(host, guest):
-    """Fraction of guest atoms lying within the host's convex extent (a simple
-    'is it included in the cavity' check for cyclodextrin-type hosts)."""
+    """Fraction of guest atoms genuinely threaded into the host cavity.
+
+    The cavity axis is the least-variance principal axis of the host coordinates. A guest
+    atom counts as included only if it lies (i) within the inner cavity radius of that axis
+    and (ii) between the two rims along the axis — i.e. inside the pocket, not merely beside
+    the ring. This is stricter than a bounding-box test, which a rim-bound guest sitting just
+    outside the ring can satisfy without being threaded through the cavity."""
     hp, gp = _positions(host), _positions(guest)
-    lo, hi = hp.min(0), hp.max(0)
-    inside = np.all((gp >= lo) & (gp <= hi), axis=1).mean()
+    site = hp.mean(0)
+    _, _, Vt = np.linalg.svd(hp - site)
+    axis = Vt[-1]                                              # cavity / symmetry axis
+    hv = hp - site
+    h_ax = hv @ axis                                          # host axial coordinate
+    h_rad = np.linalg.norm(hv - np.outer(h_ax, axis), axis=1)  # host radial distance from axis
+    cav_r = float(np.percentile(h_rad, 20))                   # inner cavity radius (the pocket wall)
+    ax_lo, ax_hi = float(h_ax.min()), float(h_ax.max())       # the two rims along the axis
+    gv = gp - site
+    g_ax = gv @ axis
+    g_rad = np.linalg.norm(gv - np.outer(g_ax, axis), axis=1)
+    inside = ((g_rad <= cav_r) & (g_ax >= ax_lo) & (g_ax <= ax_hi)).mean()
     return float(round(inside, 2))
 
 
@@ -902,6 +1013,7 @@ VALIDATION = {
 
 def validation_list():
     return [{"id": k, "name": v["name"], "guest": v["guest"],
+             "guest_smiles": v["guest_smiles"], "carrier": v["host"],
              "host": CARRIERS[v["host"]]["name"], "expected": v["expected"]}
             for k, v in VALIDATION.items()]
 
@@ -913,8 +1025,11 @@ def run_validation(case, solvent="water"):
     solvent = "water" if solvent not in ("gas", "water") else solvent
     host = _load_carrier(v["host"])
     cav = CARRIERS[v["host"]]["cavity"]
-    best = dock_confs(host, build_ligand_confs(v["guest_smiles"], n_confs=3, seed=1),
-                      n_poses=10, into_cavity=cav)
+    # Use the default Balanced thoroughness so the one-click Validation result
+    # matches the benchmark reported in the manuscript (Table 2) exactly.
+    _tb = THOROUGHNESS["balanced"]
+    best = dock_confs(host, build_ligand_confs(v["guest_smiles"], n_confs=_tb["n_confs"], seed=1),
+                      n_poses=_tb["n_poses"], into_cavity=cav)
     prof = interactions(best["host"], best["guest"])
     inside = _guest_inside(best["host"], best["guest"])
     terms = solvent_terms(best["host"], best["guest"], best["complex"])

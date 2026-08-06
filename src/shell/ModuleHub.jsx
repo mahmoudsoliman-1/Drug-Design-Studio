@@ -45,7 +45,7 @@ export default function ModuleHub({ modules, onOpen, runningCount = 0 }) {
           {modules.map((m) => <ModuleCard key={m.id} m={m} onOpen={onOpen} />)}
         </div>
 
-        <div className="mt-auto pt-6 text-right text-[10px] text-slate-600">DDS v4.0.0</div>
+        <div className="mt-auto pt-6 text-right text-[10px] text-slate-600">DDS v4.1</div>
       </div>
     </div>
   )

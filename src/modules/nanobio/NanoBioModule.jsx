@@ -27,6 +27,14 @@ const PRESETS = [
     smiles: ['NC(CCC(=O)NC(CS)C(=O)NCC(=O)O)C(=O)O'] },
 ]
 
+// Guest SMILES + carrier for each benchmark case — a built-in fallback so a validation case
+// loads into the workspace even if the running engine predates the validation_list fields.
+const VCASE_DEFAULTS = {
+  ibuprofen_betaCD: { smiles: 'CC(C)Cc1ccc(C(C)C(=O)O)cc1', carrier: 'beta_cyclodextrin' },
+  nitrophenol_alphaCD: { smiles: 'Oc1ccc([N+](=O)[O-])cc1', carrier: 'alpha_cyclodextrin' },
+  doxorubicin_GO: { smiles: 'COc1cccc2c1C(=O)c1c(O)c3c(c(O)c1C2=O)C[C@@](O)(C(=O)CO)C[C@@H]3O[C@H]1C[C@H](N)[C@H](O)[C@H](C)O1', carrier: 'graphene_oxide' },
+}
+
 // Prefer a common drug name; otherwise "Compound N (molecular formula)".
 function legendFor(id, i) {
   if (id && id.name) return id.name
@@ -55,6 +63,7 @@ export default function NanoBioModule({ onSwitchModules }) {
 
   // caches for previews
   const [compoundSvg, setCompoundSvg] = useState(null) // 2D grid SVG of the loaded compounds
+  const [drawErr, setDrawErr] = useState(false)        // true if the 2D depiction could not be produced
   const [carrierPdb, setCarrierPdb] = useState(null)   // 3D PDB of the selected carrier
   const [identities, setIdentities] = useState([])     // [{name, formula}] per compound
 
@@ -73,20 +82,29 @@ export default function NanoBioModule({ onSwitchModules }) {
     api.nanoValidationCases().then((d) => setVcases(d.cases || [])).catch(() => {})
   }, [])
 
-  // resolve names/formulae then (re)draw the 2D depiction whenever the compound set changes
+  // (re)draw the 2D depiction whenever the compound set changes. The offline RDKit draw
+  // runs FIRST with fallback labels so the view never hangs on the online name lookup;
+  // names are then resolved in the background (best-effort) and the labels upgraded.
   useEffect(() => {
-    setCompoundSvg(null); setIdentities([])
+    setCompoundSvg(null); setIdentities([]); setDrawErr(false)
     if (!compounds.length) return
+    const smiles = compounds.map((c) => c.smiles)
+    if (smiles.some((s) => !s)) { setDrawErr(true); return }   // nothing to draw (missing structure)
     let stop = false
+    const timeout = (ms) => new Promise((_, rej) => setTimeout(() => rej(new Error('timeout')), ms))
     ;(async () => {
+      try {                                                    // offline draw — never let it hang the view
+        const d = await Promise.race([api.nanoDepict(smiles, smiles.map((_, i) => legendFor(null, i))), timeout(10000)])
+        if (stop) return
+        if (d.error || !d.svg) setDrawErr(true); else setCompoundSvg(d.svg)
+      } catch { if (!stop) setDrawErr(true) }
       let ids = []
-      try { ids = (await api.nanoIdentify(compounds.map((c) => c.smiles))).items || [] } catch { /* offline */ }
-      if (stop) return
+      try { ids = (await Promise.race([api.nanoIdentify(smiles), timeout(6000)])).items || [] } catch { /* offline/slow */ }
+      if (stop || !ids.length) return
       setIdentities(ids)
-      const legends = compounds.map((_, i) => legendFor(ids[i], i))
       try {
-        const d = await api.nanoDepict(compounds.map((c) => c.smiles), legends)
-        if (!stop) setCompoundSvg(d.error ? null : d.svg)
+        const d2 = await api.nanoDepict(smiles, smiles.map((_, i) => legendFor(ids[i], i)))
+        if (!stop && !d2.error && d2.svg) setCompoundSvg(d2.svg)
       } catch { /* ignore */ }
     })()
     return () => { stop = true }
@@ -148,11 +166,19 @@ export default function NanoBioModule({ onSwitchModules }) {
       .then((d) => setJobId(d.job_id))
       .catch((e) => { setRunning(false); setError(String(e.message || e)) })
   }
-  function runValidation(caseId) {
-    setError(''); setResult(null); setRunning(true)
-    api.nanoValidate(caseId, solvent)
-      .then((r) => { setResult({ kind: 'validation', ...r }); setView('loaded'); setResultView('3d'); setSurface(true); setStep('result'); setRunning(false) })
-      .catch((e) => { setRunning(false); setError(String(e.message || e)) })
+  // Load a benchmark case into the workspace exactly like a manual run — guest + carrier
+  // previewed and the validation protocol (implicit water, Balanced, 1:1) pre-set — landing
+  // on the Carrier step ready to press Run, rather than running blindly to a result.
+  function loadValidationCase(v) {
+    const d = VCASE_DEFAULTS[v.id] || {}
+    const smiles = v.guest_smiles || d.smiles
+    const carrier = v.carrier || d.carrier
+    if (!smiles) { setError('Could not load this benchmark case.'); return }
+    setError(''); setResult(null)
+    setCompounds([{ smiles }])
+    setCarrier(carrier)
+    setSolvent('water'); setThoroughness('balanced'); setRatio('1:1')   // validation protocol
+    setStep('carrier')
   }
   function newRun() {
     setCompounds([]); setCarrier(null); setRatio('1:1'); setResult(null); setJobId(null); setRunning(false); setError(''); setStep('compounds')
@@ -203,7 +229,7 @@ export default function NanoBioModule({ onSwitchModules }) {
           <button onClick={() => setCite(true)} className="flex w-full items-center gap-2 rounded-lg px-2.5 py-1.5 text-left text-slate-300 transition hover:bg-ink-800/70 hover:text-white">
             <QuoteIcon className="h-4 w-4" color={N} /><span className="text-[12px] font-medium">Cite DDS</span>
           </button>
-          <div className="mt-1.5 px-2.5 text-[10px] text-slate-600">DDS v4.0.0 · Nano</div>
+          <div className="mt-1.5 px-2.5 text-[10px] text-slate-600">DDS v4.1 · Nano</div>
         </div>
       </div>
 
@@ -216,7 +242,7 @@ export default function NanoBioModule({ onSwitchModules }) {
               <span className="truncate">{title}</span>
               <span className="text-slate-500">· Nano bio-pharmaceutics</span>
             </div>
-            <div className="mt-0.5 text-[11px] text-slate-500">Co-formulation &amp; nanocarrier loading · MMFF94 · RDKit</div>
+            <div className="mt-0.5 text-[11px] text-slate-500">Co-formulation &amp; nanocarrier loading</div>
           </div>
           <div className="flex items-center gap-2.5">
             {result && (
@@ -232,7 +258,7 @@ export default function NanoBioModule({ onSwitchModules }) {
           </div>
         </div>
         <div className="flex items-center gap-2 border-b border-ink-700/40 px-4 py-1.5 text-[11px] text-slate-400" style={{ background: 'rgba(251,146,60,0.05)' }}>
-          <GlobeIcon className="h-3.5 w-3.5" color={N} /> Qualitative MMFF interaction energy — best used for relative comparison of poses and carriers rather than absolute affinities. Runs fully offline.
+          <GlobeIcon className="h-3.5 w-3.5" color={N} /> Runs fully offline.
         </div>
         {error && (
           <div className="flex items-center justify-between border-b border-red-500/30 bg-red-500/10 px-4 py-2 text-[12px] text-red-300">
@@ -244,20 +270,20 @@ export default function NanoBioModule({ onSwitchModules }) {
           <section className="glass relative flex min-w-0 flex-1 flex-col rounded-2xl p-3">
             <Center step={step} running={running} compounds={compounds} carriers={carriers} carrier={carrier}
               result={result} view={view} spin={spin} surface={surface} resultView={resultView} carrierMeta={carrierMeta}
-              compoundSvg={compoundSvg} carrierPdb={carrierPdb} compoundView={compoundView} smilesKey={smilesKey}
+              compoundSvg={compoundSvg} drawErr={drawErr} carrierPdb={carrierPdb} compoundView={compoundView} smilesKey={smilesKey}
               identities={identities} ratio={ratio} onPickCarrier={setCarrier} livePdb={livePdb} />
           </section>
           <aside className="flex w-[320px] shrink-0 flex-col gap-4 overflow-y-auto">
             {step === 'carrier' && (
               <button onClick={run} disabled={!canRun || running}
-                className="flex w-full items-center justify-center gap-2 rounded-xl px-4 py-2.5 text-[14px] font-semibold shadow-lg transition disabled:opacity-60"
-                style={{ background: N, color: '#2a1503' }}>
-                {running ? <Spinner /> : <PlayIcon className="h-4 w-4" />} {running ? 'Modelling…' : 'Run modelling'}
+                className="flex w-full items-center justify-center gap-2 rounded-xl bg-[#fb923c] px-4 py-2.5 text-[14px] font-semibold text-[#2a1503] shadow-lg transition hover:brightness-110 disabled:opacity-60">
+                {running ? <Spinner /> : <PlayIcon className="h-4 w-4" />}
+                {running ? 'Modelling…' : 'Run modelling'}
               </button>
             )}
             <Setup step={step} smi={smi} setSmi={setSmi} addCompound={addCompound} compounds={compounds}
               setCompounds={setCompounds} presets={PRESETS} loadPreset={loadPreset} identities={identities}
-              vcases={vcases} runValidation={runValidation} running={running}
+              vcases={vcases} loadValidationCase={loadValidationCase} running={running}
               carrier={carrier} setCarrier={setCarrier} carriers={carriers} carrierMeta={carrierMeta} canRun={canRun}
               ratio={ratio} setRatio={setRatio}
               thoroughness={thoroughness} setThoroughness={setThoroughness} solvent={solvent} setSolvent={setSolvent} methodText={METHOD_TEXT}
@@ -285,7 +311,7 @@ function Center(props) {
 }
 
 /* ---------- compounds ---------- */
-function CompoundsView({ compounds, compoundView, compoundSvg, smilesKey, identities }) {
+function CompoundsView({ compounds, compoundView, compoundSvg, drawErr, smilesKey, identities }) {
   if (!compounds.length) {
     return (
       <div className="flex h-full flex-col items-center justify-center px-8 text-center">
@@ -310,7 +336,9 @@ function CompoundsView({ compounds, compoundView, compoundSvg, smilesKey, identi
       {compoundView === '2d'
         ? (compoundSvg
             ? <div className="min-h-0 flex-1 overflow-auto rounded-xl bg-white/[0.03] p-2"><RawFigure svg={compoundSvg} name="DDS_nano_compounds_2D" /></div>
-            : <Msg spinner title="Drawing structures…" sub="Rendering 2D structures with pharmacophore features." />)
+            : drawErr
+              ? <Msg title="Structure preview unavailable" sub="Could not draw this compound. Switch to the 3D view, or re-enter the structure." />
+              : <Msg spinner title="Drawing structures…" sub="Rendering 2D structures." />)
         : <Compound3DGrid key={smilesKey} compounds={compounds} identities={identities} />}
     </div>
   )
@@ -542,7 +570,7 @@ function Setup(props) {
   return null
 }
 
-function CompoundSetup({ smi, setSmi, addCompound, compounds, setCompounds, presets, loadPreset, vcases, runValidation, running, compoundView, setCompoundView, identities = [] }) {
+function CompoundSetup({ smi, setSmi, addCompound, compounds, setCompounds, presets, loadPreset, vcases, loadValidationCase, running, compoundView, setCompoundView, identities = [] }) {
   return (
     <>
       <Panel title="Add a compound">
@@ -589,11 +617,10 @@ function CompoundSetup({ smi, setSmi, addCompound, compounds, setCompounds, pres
         </div>
       </Panel>
       <Panel title="Validation / Benchmarking cases">
-        <p className="mb-2 text-[11px] leading-snug text-slate-500">Documented host–guest systems — cyclodextrin inclusion and carbon-nanomaterial adsorption — reproduced as a favourable, correctly-placed complex.</p>
         <div className="flex flex-col gap-1.5">
           {vcases.map((v) => (
-            <button key={v.id} onClick={() => runValidation(v.id)} disabled={running}
-              className="flex flex-col rounded-lg bg-ink-900/50 px-3 py-2 text-left ring-1 ring-ink-700/60 transition hover:bg-ink-800/60 disabled:opacity-50">
+            <button key={v.id} onClick={() => loadValidationCase(v)}
+              className="flex flex-col rounded-lg bg-ink-900/50 px-3 py-2 text-left ring-1 ring-ink-700/60 transition hover:bg-ink-800/60">
               <span className="text-[12px] font-semibold text-slate-200">{v.name}</span>
               <span className="text-[11px] text-slate-500">{v.guest} · {v.host}</span>
             </button>
@@ -648,7 +675,7 @@ function CarrierSetup({ carriers, carrier, setCarrier, compounds, ratio, setRati
           ))}
         </div>
         <p className="mt-2 text-[11px] leading-snug text-slate-500">
-          {methodText[thoroughness]} — scales the number of guest conformers and orientations tried. More thorough = slower but explores more of the landscape. Minimisation always runs to convergence.
+          {methodText[thoroughness]} — scales the number of guest conformers and the random-restart + basin-hopping search budget. More thorough = slower but explores more of the landscape. Minimisation always runs to convergence.
         </p>
       </Panel>
       <Panel title="Choose a nanocarrier">
@@ -726,9 +753,9 @@ function ResultSetup({ result, view, setView, spin, setSpin, surface, setSurface
       )}
       <Panel title="Notes">
         <p className="text-[11px] leading-snug text-slate-500">
-          The MMFF94 interaction energy — reported under the selected solvent model (implicit water or gas phase) — is a
-          <span className="text-slate-300"> relative</span> indicator of association, useful for comparing poses and ranking
-          options, not an absolute binding free energy. Whole liposomes/nanoparticles are represented by a fragment model.
+          The MMFF94 interaction energy is reported under the selected solvent model (implicit water or gas phase). Whole
+          liposomes and nanoparticles are represented by a fragment model. See the Documentation for interpretation and
+          validation.
         </p>
       </Panel>
     </>
@@ -798,7 +825,8 @@ function buildNanoReport(result, carrierMeta) {
   const solvent = result.solvent === 'gas' ? 'Gas phase' : 'Implicit water'
   const termRows = terms ? [['van der Waals', terms.vdw], ['Electrostatic', terms.electrostatic], ['Non-polar (hydrophobic)', terms.nonpolar], ['Gas-phase interaction', terms.gas_phase], ['Implicit-water interaction', terms.implicit_water], ['Solvation energy', terms.solvation]]
     .map(([k, v]) => `<tr><th>${k}</th><td>${v} kcal/mol</td></tr>`).join('') : ''
-  const methodRows = method ? [['Conformer engine', method.conformer_engine], ['Conformers', method.conformers], ['Orientations per conformer', method.orientations_per_conformer], ['Total placements', method.total_placements], ['Force field', method.force_field], ['Minimisation', method.minimization], ['Pose selection', method.selection], ['Solvent model', method.solvent_model], ['Thoroughness', method.thoroughness]]
+  const methodRows = method ? [['Conformer engine', method.conformer_engine], ['Conformers', method.conformers], ['Search method', method.search_method], ['Random-restart seeds / conformer', method.scan_seeds_per_conformer], ['Refinement', method.refined_seeds != null ? `${method.refined_seeds} seeds × ${method.mc_steps_per_refined_seed} Monte-Carlo steps` : null], ['Force field', method.force_field], ['Minimisation', method.minimization], ['Pose selection', method.selection], ['Solvent model', method.solvent_model], ['Thoroughness', method.thoroughness]]
+    .filter(([, v]) => v != null)
     .map(([k, v]) => `<tr><th>${esc(k)}</th><td>${esc(v)}</td></tr>`).join('') : ''
   const contactRows = (arr, kind) => (arr || []).map((c) => `<tr><td>${kind}</td><td>${esc(c.guest_atom || 'ring')}</td><td>${esc(c.host_atom || 'ring')}</td><td>${esc(c.distance)}</td></tr>`).join('')
   const rows = prof ? contactRows(prof.hbond, 'H-bond') + contactRows(prof.hydrophobic, 'Hydrophobic') + contactRows(prof.pi, 'π–π') : ''
@@ -834,9 +862,9 @@ function buildNanoReport(result, carrierMeta) {
 ${termRows ? `<h2>Energy decomposition</h2><table><tbody>${termRows}</tbody></table>` : ''}
 ${methodRows ? `<h2>Method &amp; parameters</h2><table><tbody>${methodRows}</tbody></table>` : ''}
 ${rows ? `<h2>Interaction profile</h2><table><thead><tr><th>Type</th><th>Guest atom</th><th>Host atom</th><th>Distance (Å)</th></tr></thead><tbody>${rows}</tbody></table>` : ''}
-<div class="note"><b>Method &amp; scope.</b> 3D structures were generated with RDKit ETKDG and the assembly minimised with the MMFF94 force field including inter-fragment non-bonded terms. The reported interaction energy is an MMFF94 value under the selected solvent model (${solvent}; the implicit-water option adds distance-dependent dielectric screening, ε=4r, plus a SASA non-polar term) — a <b>relative</b> indicator of association for comparing poses and options, <b>not</b> an absolute binding free energy, a loading capacity, or a substitute for experiment. Whole liposomes/nanoparticles are represented by a single representative fragment.</div>
+<div class="note"><b>Method &amp; scope.</b> 3D structures were generated by distance-geometry embedding, the geometry of association located by a deterministic global search (a geometry-aware random-restart scan refined by basin-hopping / Monte-Carlo minimisation), and each assembly minimised with the MMFF94 force field including inter-fragment non-bonded terms. The reported interaction energy is a molecular-mechanics value under the selected solvent model (${solvent}; the implicit-water option adds distance-dependent dielectric screening, ε=4r, plus a SASA non-polar term) — a reproducible, physics-based score that ranks and correlates with binding affinity (validated against experimental cyclodextrin binding data), rather than an absolute binding free energy or a loading capacity. Whole liposomes/nanoparticles are represented by a single representative fragment.</div>
 <h2>Computational methods&nbsp;<span style="color:#b45309">*</span></h2>
-<p>Drug Design Studio (DDS) 4.0<sup>1&ndash;4</sup> was used to build the drug&ndash;nanocarrier / drug&ndash;drug model, assemble the nanocomplex, set the conformational-search, stoichiometry and solvent parameters, and perform the interaction-energy computations and analyses reported here. Guest conformers were generated by distance-geometry embedding and force-field optimisation; an orientational and positional search assembled each complex with the selected carrier; every pose was energy-minimised with a molecular-mechanics force field retaining inter-fragment non-bonded terms; and the interaction energy was evaluated under the selected ${esc(solvent.toLowerCase())} model and decomposed into van der Waals, electrostatic and non-polar contributions.</p>
+<p>Drug Design Studio (DDS) 4.0<sup>1&ndash;4</sup> was used to build the drug&ndash;nanocarrier / drug&ndash;drug model, assemble the nanocomplex, set the search, stoichiometry and solvent parameters, and perform the interaction-energy computations and analyses reported here. Guest conformers were generated by distance-geometry embedding and force-field optimisation; the most favourable geometry of association with the carrier was located by a deterministic global search — a geometry-aware random-restart scan refined by basin-hopping (Monte-Carlo) minimisation; every pose was energy-minimised with a molecular-mechanics force field retaining inter-fragment non-bonded terms; and the interaction energy was evaluated under the selected ${esc(solvent.toLowerCase())} model and decomposed into van der Waals, electrostatic and non-polar contributions.</p>
 <p style="font-size:11px;color:#64748b"><b>*</b> This computational-methods section is provided as a guidance template only; please rewrite and adapt it in your own words for your manuscript.</p>
 <h2>References</h2>
 <ol style="font-size:11px;line-height:1.6;color:#475569;padding-left:18px;margin-top:6px">
@@ -892,10 +920,11 @@ function EnergyBreakdown({ terms, solvent, method }) {
         <div className="absolute right-0 top-full z-20 mt-1 w-[320px] rounded-lg bg-ink-900 p-3 text-[11px] leading-relaxed shadow-xl ring-1 ring-ink-600">
           <div className="mb-1.5 text-[12px] font-semibold text-white">Method &amp; parameters</div>
           {[['Conformer engine', method.conformer_engine], ['Conformers', method.conformers],
-            ['Orientations / conformer', method.orientations_per_conformer], ['Total placements', method.total_placements],
+            ['Search method', method.search_method], ['Random-restart seeds / conformer', method.scan_seeds_per_conformer],
+            ['Refinement', method.refined_seeds != null ? `${method.refined_seeds} seeds × ${method.mc_steps_per_refined_seed} MC steps` : null],
             ['Force field', method.force_field], ['Minimisation', method.minimization],
             ['Pose selection', method.selection], ['Solvent model', method.solvent_model],
-            ['Thoroughness', method.thoroughness]].map(([k, v]) => (
+            ['Thoroughness', method.thoroughness]].filter(([, v]) => v != null).map(([k, v]) => (
             <div key={k} className="flex gap-2 border-t border-ink-700/50 py-1 first:border-t-0">
               <span className="w-[38%] shrink-0 text-slate-500">{k}</span><span className="text-slate-300">{v}</span>
             </div>

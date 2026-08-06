@@ -98,7 +98,7 @@ if sys.platform == "darwin":
         bundle_identifier="za.ac.ukzn.drugdesignstudio",
         info_plist={
             "NSHighResolutionCapable": True,
-            "CFBundleShortVersionString": "4.0.0",
+            "CFBundleShortVersionString": "4.1.0",
             # WKWebView blocks the local http://127.0.0.1 UI without this → blank white window
             "NSAppTransportSecurity": {
                 "NSAllowsArbitraryLoads": True,

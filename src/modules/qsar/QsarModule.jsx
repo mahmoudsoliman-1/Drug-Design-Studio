@@ -255,7 +255,7 @@ export default function QsarModule({ onSwitchModules, onHandoff }) {
           <button onClick={() => setCite(true)} className="flex w-full items-center gap-2 rounded-lg px-2.5 py-1.5 text-left text-slate-300 transition hover:bg-ink-800/70 hover:text-white">
             <QuoteIcon className="h-4 w-4" color={S} /><span className="text-[12px] font-medium">Cite DDS</span>
           </button>
-          <div className="mt-1.5 px-2.5 text-[10px] text-slate-600">DDS v4.0.0 · QSAR</div>
+          <div className="mt-1.5 px-2.5 text-[10px] text-slate-600">DDS v4.1 · QSAR</div>
         </div>
       </div>
 

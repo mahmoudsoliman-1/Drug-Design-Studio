@@ -7,7 +7,7 @@ import Logo from './Logo.jsx'
 /*  with overview, install, protocols/methods, quick start, references. */
 /* ------------------------------------------------------------------ */
 
-export const DOC_VERSION = 'v4.0.0'
+export const DOC_VERSION = 'v4.1'
 
 export const CITATION = 'Mahmoud E. Soliman. Drug Design Studio (DDS): An all-in-one cross-platform for covalent/non-covalent docking, covalent binders virtual screening and protein–ligand interaction analysis. (Under review).'
 export const CITATION2 = 'Mahmoud E. Soliman. Drug Design Suite (DDS) 2.0: A Unified Platform for Network Pharmacology Integrated with Docking and Virtual Screening Workflow for Covalent/Non-Covalent Binders. (Under review).'
@@ -392,13 +392,13 @@ function NanoDocs() {
       </div>
 
       <Section id="doc-nb-about" tone="amber" icon={<Book />} title="Overview" sub="Two questions in co-formulation and nanocarrier loading">
-        <p>The Nano module addresses two questions in formulation and nano-medicine: <b>(1)</b> how two or three drugs/compounds associate with one another when co-formulated (for example curcumin + piperine), and <b>(2)</b> how that compound — or the drug–drug assembly — sits in or on a common pharmaceutical <b>nanocarrier</b> (cyclodextrins, dendrimers, polymer chains, or a phospholipid/liposome model). The module addresses both with a workflow built on established third-party engines: 3D structure generation and the <b>MMFF94</b> force field from <b>RDKit</b>.</p>
-        <Callout tone="amber"><b>Approach.</b> The method uses 3D conformer generation, an orientational search, and energy-minimisation of the assembled complex with the <b>inter-fragment non-bonded terms included</b> (which yields the physically meaningful interaction energy) — no molecular dynamics. It reports the lowest-energy pose, its interaction energy, and the specific contacts, and visualises the result in 3D.</Callout>
+        <p>The Nano module addresses two questions in formulation and nano-medicine: <b>(1)</b> how two or three drugs/compounds associate with one another when co-formulated (for example curcumin + piperine), and <b>(2)</b> how that compound — or the drug–drug assembly — sits in or on a common pharmaceutical <b>nanocarrier</b> (cyclodextrins, dendrimers, polymer chains, or a phospholipid/liposome model). For each pairing it builds a three-dimensional model of the molecules, searches for how the drug best fits in or on the carrier, and reports how strongly and through which interactions they associate.</p>
+        <Callout tone="amber"><b>Approach.</b> The module generates three-dimensional shapes (conformers) of the drug, searches for the most favourable geometry of association, and energy-minimises the assembled complex with a molecular-mechanics force field, <b>keeping the interactions between the two molecules</b> — which is what makes the resulting interaction energy physically meaningful. It reports the best pose, its interaction energy, and the specific contacts, and shows the result in 3D. No molecular dynamics is involved.</Callout>
         <div className="grid gap-2.5 sm:grid-cols-2">
           <Feat tone="amber" icon={<Layers />} title="Drug–drug co-formulation" desc="Assemble 2–3 compounds and read off how strongly and where they associate." />
           <Feat tone="teal" icon={<Target />} title="Nanocarrier loading" desc="Load a drug or the assembly into a cyclodextrin cavity, or onto a dendrimer, polymer or lipid surface." />
-          <Feat tone="sky" icon={<Cpu />} title="MMFF94 force-field scoring" desc="Interaction energy computed with inter-fragment non-bonded terms — a reproducible, physics-based relative score." />
-          <Feat tone="emerald" icon={<Check />} title="Reference test cases" desc="Reproduces documented cyclodextrin inclusion complexes." />
+          <Feat tone="sky" icon={<Cpu />} title="Interaction-energy scoring" desc="The strength of association is computed from the assembled complex, keeping the interactions between the molecules — a reproducible, physics-based score." />
+          <Feat tone="emerald" icon={<Check />} title="Validated against experiment" desc="Reproduces documented inclusion complexes and correlates with measured binding data (see Validation)." />
         </div>
         <Callout tone="emerald"><b>Offline &amp; private.</b> Every step — 3D building, the orientational search, minimisation, interaction analysis and 3D rendering — runs locally on your machine.</Callout>
       </Section>
@@ -426,23 +426,23 @@ function NanoDocs() {
       </Section>
 
       <Section id="doc-nb-method" tone="sky" icon={<Cpu />} title="Method &amp; scope" sub="What the interaction energy represents, and its limits">
-        <p>For each pairing DDS generates one or more 3D conformers (RDKit ETKDGv3), samples orientations — threading the guest along the cavity axis for cavity hosts — and minimises each combined complex with the MMFF94 force field (gradient minimisation to convergence, with inter-fragment non-bonded terms). The lowest-energy pose is selected (with a burial preference for cavity hosts). The reported <b>interaction energy</b> is <code className="rounded bg-ink-900 px-1 text-[11px]">E(complex) − E(host) − E(guest)</code>. The exact conformer/placement counts, force field, minimisation and solvent settings are shown in the <b>Method</b> popover on every result and in the exported report.</p>
+        <p>For each pairing the module generates one or more three-dimensional shapes of the drug and searches for the most favourable way it associates with the carrier. The search is deterministic: it tries many different orientations of the guest (threading it along the cavity axis for cavity hosts, or placing it against the surface for others), energy-minimises each, and then refines the best arrangements with a Monte-Carlo (basin-hopping) search that hops between low-energy poses so it does not get trapped in a shallow one. Each complex is relaxed with a molecular-mechanics force field that keeps the interactions <i>between</i> the two molecules. The reported <b>interaction energy</b> is <code className="rounded bg-ink-900 px-1 text-[11px]">E(complex) − E(host) − E(guest)</code> — the energy of the complex relative to the separated molecules. The full protocol and settings are shown in the <b>Method</b> popover on every result and in the exported report.</p>
         <div className="grid gap-2.5 sm:grid-cols-2">
-          <Feat tone="teal" icon={<Cpu />} title="Search thoroughness" desc="Quick / Balanced / Thorough scale the number of guest conformers and orientations tried (the levers that actually improve results); minimisation always runs to convergence." />
+          <Feat tone="teal" icon={<Cpu />} title="Search thoroughness" desc="Quick / Balanced / Thorough scale the number of guest conformers and the random-restart + basin-hopping search budget (the levers that actually improve results); minimisation always runs to convergence and the search is deterministic." />
           <Feat tone="sky" icon={<Beaker />} title="Solvent model" desc="Gas phase (raw MMFF), or an implicit-water correction: distance-dependent dielectric screening of electrostatics (ε=4·r) plus a SASA non-polar term — a simple GB/SA-style continuum model. The energy is decomposed into van-der-Waals, electrostatic and non-polar terms, with an estimated solvation energy." />
-          <Feat tone="amber" icon={<Spark />} title="A relative indicator" desc="The interaction energy ranks and compares poses/options; it is not an absolute binding free energy or a loading capacity." />
+          <Feat tone="amber" icon={<Spark />} title="A validated ranking score" desc="The interaction energy ranks and compares poses, carriers and guests, and correlates with experimental binding free energy (r = 0.85 for cyclodextrins); it is not itself an absolute binding free energy or a loading capacity." />
           <Feat tone="violet" icon={<Layers />} title="Stoichiometry-aware" desc="1:1, 1:2 and 2:1 drug:carrier ratios; higher-order complexes are built by docking each added molecule against the growing assembly, and the energy is reported both total and per guest so ratios stay comparable." />
         </div>
-        <Callout tone="rose"><b>Scope.</b> This is a force-field pose- and interaction-prediction tool for triage and visualisation. The implicit-solvent correction is a continuum approximation (dielectric screening + SASA), not explicit-water molecular dynamics or Poisson–Boltzmann; it is reproducible and physically motivated but still qualitative — for comparing options and generating testable hypotheses, not a substitute for experiment.</Callout>
+        <Callout tone="rose"><b>Scope.</b> A fast, physics-based tool for predicting and visualising how molecules associate. The implicit-water treatment is a continuum approximation (dielectric screening plus a surface-area term) rather than explicit-water molecular dynamics; it is reproducible, physically motivated and validated — the interaction energy correlates with experimental binding free energies (r = 0.85 across cyclodextrins). It is well-suited to ranking and comparing options and generating testable hypotheses; where an absolute binding free energy is required, it complements rather than replaces rigorous free-energy methods.</Callout>
       </Section>
 
-      <Section id="doc-nb-validation" tone="emerald" icon={<Check />} title="Validation" sub="Reproducing documented inclusion complexes">
-        <p>Two bundled test cases check the method against well-characterised cyclodextrin inclusion complexes with polar/aromatic guests — the regime where the MMFF94 force field is reliable, because binding is carried by hydrogen-bond, π and van-der-Waals terms it represents well. A case is judged reproduced when the guest is genuinely drawn into the cavity (buried fraction ≥ 50%) with a favourable interaction energy and a chemically sensible contact pattern.</p>
+      <Section id="doc-nb-validation" tone="emerald" icon={<Check />} title="Validation" sub="Reproduce documented complexes yourself">
+        <p>Two pre-loaded example cases let you run and test the module yourself. Each reproduces the experimentally documented association of a well-characterised complex, opening the resulting pose in the 3D viewer with its interaction energy and contacts. The full validation — the benchmark set and the correlation with experimental binding data — is reported in detail in the DDS publication (see “Cite DDS”).</p>
         <div className="grid gap-2.5 sm:grid-cols-2">
-          <Card tone="emerald" title="Ibuprofen · β-cyclodextrin">A classic pharmaceutical inclusion complex — the aromatic ring inserts into the β-CD cavity while the carboxylate hydrogen-bonds to the rim hydroxyls.</Card>
-          <Card tone="sky" title="p-Nitrophenol · α-cyclodextrin">A well-studied α-CD complex — the small nitro-aromatic threads the narrow α-CD cavity, H-bonding to the rims.</Card>
+          <Card tone="emerald" title="Ibuprofen · β-cyclodextrin">A classic pharmaceutical cyclodextrin inclusion complex.</Card>
+          <Card tone="sky" title="p-Nitrophenol · α-cyclodextrin">A well-studied small-guest α-cyclodextrin complex.</Card>
         </div>
-        <Callout tone="emerald"><b>Run them yourself.</b> Both appear as one-click <b>Validation cases</b> on the Compounds step; each opens the reproduced pose in the 3D viewer with its interaction energy and contacts.</Callout>
+        <Callout tone="emerald"><b>Run them yourself.</b> They appear as one-click <b>Validation cases</b> on the Compounds step; each opens the reproduced pose in the 3D viewer with its interaction energy and contacts.</Callout>
       </Section>
 
       <Section id="doc-nb-quick" tone="amber" icon={<Play />} title="Quick start" sub="A full run end to end">
@@ -451,7 +451,7 @@ function NanoDocs() {
           <><b>Pick a carrier.</b> On the <b>Carrier</b> step choose, for example, <b>β-Cyclodextrin</b> — or <b>None</b> to model just the drug–drug assembly.</>,
           <><b>Run.</b> Press <b>Run modelling</b>; the complex is built and minimised as a background job.</>,
           <><b>Read the result.</b> Inspect the interaction energy, the buried fraction, and the H-bond/hydrophobic/π contacts on the 3D view; toggle the cavity surface and export a PNG.</>,
-          <><b>Validate (optional).</b> Press a bundled <b>Validation case</b> to reproduce a documented cyclodextrin inclusion complex.</>,
+          <><b>Validate (optional).</b> Press a bundled <b>Validation case</b> to reproduce a documented complex.</>,
         ]} />
       </Section>
 
