@@ -7,6 +7,11 @@ import { saveFile } from '../../download.js'
 export default function VennDiagram({ compoundLabel, diseaseLabel, compoundCount, diseaseCount, sharedCount }) {
   const svgRef = useRef(null)
   const [menu, setMenu] = useState(false)
+  // optional user-edited circle labels for export; null = use the auto-label (default)
+  const [cLab, setCLab] = useState(null)
+  const [dLab, setDLab] = useState(null)
+  const effCompound = cLab == null ? (compoundLabel || '') : cLab
+  const effDisease = dLab == null ? (diseaseLabel || '') : dLab
 
   const shared = sharedCount || 0
   const cOnly = Math.max(0, (compoundCount || 0) - shared)
@@ -29,13 +34,13 @@ export default function VennDiagram({ compoundLabel, diseaseLabel, compoundCount
           {menu && (
             <div className="absolute right-0 mt-1 flex flex-col overflow-hidden rounded-lg bg-ink-850 py-1 text-[11px] ring-1 ring-ink-600">
               {[['Transparent', 'transparent'], ['White', 'white'], ['Dark', 'dark']].map(([label, bg]) => (
-                <button key={bg} onClick={() => { downloadPNG(svgRef.current, filename(compoundLabel, diseaseLabel), bg); setMenu(false) }}
+                <button key={bg} onClick={() => { downloadPNG(svgRef.current, filename(effCompound, effDisease), bg); setMenu(false) }}
                   className="whitespace-nowrap px-3 py-1.5 text-left text-slate-300 hover:bg-ink-700 hover:text-white">{label}</button>
               ))}
             </div>
           )}
         </div>
-        <button onClick={() => downloadSVG(svgRef.current, filename(compoundLabel, diseaseLabel))}
+        <button onClick={() => downloadSVG(svgRef.current, filename(effCompound, effDisease))}
           className="rounded-lg bg-ink-850/90 px-2.5 py-1 text-[11px] text-slate-300 ring-1 ring-ink-600 transition hover:bg-ink-800 hover:text-white">SVG</button>
       </div>
 
@@ -65,11 +70,22 @@ export default function VennDiagram({ compoundLabel, diseaseLabel, compoundCount
         <text x="362" y="171" textAnchor="middle" fontSize="11" fill="#0b4f70">{pct(dOnly)}</text>
 
         {/* names below each circle */}
-        <text x="150" y="298" textAnchor="middle" fontSize="16" fontWeight="700" fill="#14b8a6">{clip(compoundLabel, 18) || 'compound'}</text>
+        <text x="150" y="298" textAnchor="middle" fontSize="16" fontWeight="700" fill="#14b8a6">{clip(effCompound, 22) || 'compound'}</text>
         <text x="150" y="316" textAnchor="middle" fontSize="11.5" fill="#94a3b8">{compoundCount} targets</text>
-        <text x="330" y="298" textAnchor="middle" fontSize="16" fontWeight="700" fill="#38bdf8">{clip(diseaseLabel, 18) || 'disease'}</text>
+        <text x="330" y="298" textAnchor="middle" fontSize="16" fontWeight="700" fill="#38bdf8">{clip(effDisease, 22) || 'disease'}</text>
         <text x="330" y="316" textAnchor="middle" fontSize="11.5" fill="#94a3b8">{diseaseCount} genes</text>
       </svg>
+
+      <div className="mt-2 flex flex-wrap items-center gap-2 rounded-lg bg-ink-850/70 p-2 ring-1 ring-ink-700">
+        <label className="text-[11px] text-slate-400">Left label</label>
+        <input value={effCompound} onChange={(e) => setCLab(e.target.value)} placeholder="compound"
+          className="min-w-0 flex-1 rounded-md border border-ink-600 bg-ink-950/60 px-2 py-1 text-[12px] text-teal-300 outline-none focus:border-violet" />
+        <label className="text-[11px] text-slate-400">Right label</label>
+        <input value={effDisease} onChange={(e) => setDLab(e.target.value)} placeholder="disease"
+          className="min-w-0 flex-1 rounded-md border border-ink-600 bg-ink-950/60 px-2 py-1 text-[12px] text-sky-300 outline-none focus:border-violet" />
+        <button onClick={() => { setCLab(null); setDLab(null) }}
+          className="rounded-md px-2 py-1 text-[11px] text-slate-400 ring-1 ring-ink-600 hover:text-white hover:ring-ink-500">Reset</button>
+      </div>
     </div>
   )
 }

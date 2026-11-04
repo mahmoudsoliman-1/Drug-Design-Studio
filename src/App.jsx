@@ -123,6 +123,41 @@ export default function DockingModule({ onSwitchModules, handoff, onHandoffConsu
     try { id ? localStorage.setItem('dds_active_job', id) : localStorage.removeItem('dds_active_job') } catch {}
   }
 
+  // ssMM/GBSA binding-energy: tracked at app level so the running/result state
+  // survives navigation between workflow steps (the transient ResultsView unmounts)
+  const [mmRes, setMmRes] = useState(null)
+  const [mmErr, setMmErr] = useState('')
+  const [mmJobId, setMmJobId] = useState(null)
+  const mmRef = useRef(null)
+  const mmBusy = !!mmJobId
+  // batch ssMM/GBSA (screening rescoring) — also app-level so per-compound ΔG
+  // survives navigation and keeps filling in while the job runs
+  const [mmBatchMap, setMmBatchMap] = useState({})    // compound id -> {dG_bind, ...}
+  const [mmBatchProg, setMmBatchProg] = useState('')
+  const [mmBatchJobId, setMmBatchJobId] = useState(null)
+  const mmBatchRef = useRef(null)
+  const mmBatchBusy = !!mmBatchJobId
+  // clear any binding-energy result/run — the estimate belongs to a specific
+  // complex/result, so it must be dropped whenever a new complex/result is loaded
+  function resetMm() {
+    mmRef.current = null; setMmJobId(null); setMmRes(null); setMmErr('')
+    mmBatchRef.current = null; setMmBatchJobId(null); setMmBatchMap({}); setMmBatchProg('')
+  }
+  async function runMmgbsa(payload) {
+    setMmRes(null); setMmErr('')
+    try {
+      const { job_id } = await api.mmgbsa(payload)
+      mmRef.current = job_id; setMmJobId(job_id)
+    } catch (e) { setMmErr(String(e?.message || e)) }
+  }
+  async function runMmgbsaBatch(items) {
+    setMmBatchProg('Starting…')
+    try {
+      const { job_id } = await api.mmgbsaBatch({ items, charges: 'mmff94' })
+      mmBatchRef.current = job_id; setMmBatchJobId(job_id)
+    } catch (e) { setMmBatchProg(String(e?.message || e)) }
+  }
+
   useEffect(() => {
     let ok = true
     api.health().then(() => ok && setEngine('online')).catch(() => ok && setEngine('offline'))
@@ -147,12 +182,36 @@ export default function DockingModule({ onSwitchModules, handoff, onHandoffConsu
             const full = await api.getJob(cur)
             if (full.status === 'done') {
               if (full.kind === 'dock') { setDockRes(full.result); setMode('single') }
-              else { setScreenRes(full.result); setMode('screen') }
+              else if (full.kind === 'screen') { setScreenRes(full.result); setMode('screen') }
               setHasResults(true); setActive('results')
             } else if (full.status === 'error') {
               setErrorMsg(full.error || 'Job failed.')
             }
             setRunning(false)
+          }
+        }
+        // ssMM/GBSA completion — resolve the result without disturbing the
+        // current dock/screen results or the active workflow step
+        const mj = mmRef.current
+        if (mj) {
+          const mjob = list.find((j) => j.job_id === mj)
+          if (mjob && mjob.status !== 'running') {
+            mmRef.current = null; setMmJobId(null)
+            const full = await api.getJob(mj)
+            if (full.status === 'done') setMmRes(full.result)
+            else if (full.status === 'error') setMmErr(full.error || 'Binding-energy calculation failed.')
+          }
+        }
+        // ssMM/GBSA batch (screening rescoring) — merge per-compound ΔG incrementally
+        const bj = mmBatchRef.current
+        if (bj) {
+          const bjob = list.find((j) => j.job_id === bj)
+          if (bjob) {
+            const full = await api.getJob(bj)
+            const partial = (full.result && full.result.results) || []
+            if (partial.length) setMmBatchMap((m) => { const n = { ...m }; partial.forEach((p) => { n[p.id] = p }); return n })
+            setMmBatchProg((full.progress && full.progress.msg) || '')
+            if (full.status !== 'running') { mmBatchRef.current = null; setMmBatchJobId(null) }
           }
         }
       } catch { /* engine hiccup — keep polling */ }
@@ -218,8 +277,10 @@ export default function DockingModule({ onSwitchModules, handoff, onHandoffConsu
   async function openJob(summary) {
     if (summary.status !== 'done') return
     const full = await api.getJob(summary.job_id)
+    if (full.kind === 'mmgbsa') { setMmRes(full.result); setMode('single'); setHasResults(true); setActive('results'); setJobsOpen(false); return }
+    resetMm()   // a different docked/screened result is being loaded — drop any stale ΔG
     if (full.kind === 'dock') { setDockRes(full.result); setMode('single') }
-    else { setScreenRes(full.result); setMode('screen') }
+    else if (full.kind === 'screen') { setScreenRes(full.result); setMode('screen') }
     setHasResults(true); setActive('results'); setJobsOpen(false)
   }
   async function removeJob(id) {
@@ -304,7 +365,7 @@ export default function DockingModule({ onSwitchModules, handoff, onHandoffConsu
     clearReceptor()
     setLigandFile(null); setLigandSmiles(DEFAULT_SMILES)
     setCovalent(false); setCovMode('geometry')
-    setActiveJob(null); setRunning(false)
+    setActiveJob(null); setRunning(false); resetMm()
   }
 
   // re-prepare the loaded receptor from its stored structure (waters/ions + removed
@@ -345,7 +406,7 @@ export default function DockingModule({ onSwitchModules, handoff, onHandoffConsu
     if (covalent && !covResidue) { setErrorMsg('Select a reactive residue for covalent docking (Binding Site step).'); setActive('site'); return }
     if (isScreen) return runScreening()
     if (!ligandFile && !ligandSmiles.trim()) { setErrorMsg('Provide a ligand (SMILES or file).'); setActive('ligands'); return }
-    setRunning(true)
+    setRunning(true); resetMm()
     try {
       const lig = ligandFile ? { ligand_text: ligandFile.text, ligand_fmt: ligandFile.fmt } : { smiles: ligandSmiles.trim() }
       const { job_id } = await api.dock({
@@ -375,7 +436,7 @@ export default function DockingModule({ onSwitchModules, handoff, onHandoffConsu
   async function runScreening() {
     const ligs = parseSmilesLibrary(screenSmiles)
     if (!ligs.length) { setErrorMsg('Add at least one SMILES to the library.'); setActive('ligands'); return }
-    setRunning(true)
+    setRunning(true); resetMm()
     try {
       const { job_id } = await api.screen({
         receptor_id: receptor.receptor_id, ligands: ligs,
@@ -417,8 +478,10 @@ export default function DockingModule({ onSwitchModules, handoff, onHandoffConsu
         <main className="flex min-h-0 flex-1 gap-4 p-4">
           {active === 'results' && hasResults ? (
             <>
-              {isScreen ? <ScreeningResults result={screenRes} receptor={receptor} box={box} scoring={scoring} />
-                : <ResultsView result={dockRes} receptorName={receptor?.name} receptor={receptor} ligandSmiles={ligandSmiles} />}
+              {isScreen ? <ScreeningResults result={screenRes} receptor={receptor} box={box} scoring={scoring}
+                    mmMap={mmBatchMap} mmBusy={mmBatchBusy} mmProg={mmBatchProg} onRunBatch={runMmgbsaBatch} />
+                : <ResultsView result={dockRes} receptorName={receptor?.name} receptor={receptor} ligandSmiles={ligandSmiles}
+                    mmRes={mmRes} mmBusy={mmBusy} mmErr={mmErr} onRunMmgbsa={runMmgbsa} onClearMm={resetMm} />}
               {aiOpen ? (
                 <aside className="flex w-[270px] shrink-0 flex-col gap-4">
                   <AiPanel active="results" mode={mode} receptor={receptor} box={box}
@@ -456,6 +519,7 @@ export default function DockingModule({ onSwitchModules, handoff, onHandoffConsu
                           empty={ligStep ? false : !receptor} ligResn={ligStep ? 'LIG' : (receptor?.ligand_resn || 'MK1')}
                           box={box} showBox={!ligStep && active === 'site'}
                           overlayLigand={!isScreen && !ligStep && (active === 'site' || active === 'dock') ? placedLigandPdb : null}
+                          hideNativeLigand={!isScreen && !ligStep && (active === 'site' || active === 'dock') && !!placedLigandPdb}
                           covalentTarget={!ligStep && covalent && active === 'site' && covSel ? {
                             chain: covSel.chain, resi: covSel.resi, residueLabel: covSel.residue,
                             atomLabel: covSel.atom_label, nuc: [covSel.x, covSel.y, covSel.z],
@@ -776,12 +840,6 @@ function TopBar({ onRun, running, bestAffinity, isScreen, covalent, receptorName
       )}
 
       <div className="ml-auto flex items-center gap-2">
-        {onSwitchModules && (
-          <button onClick={onSwitchModules} title="Switch modules — running jobs keep going"
-            className="flex items-center gap-2 rounded-lg bg-violet/15 px-3 py-2 text-[13px] font-semibold text-violet ring-1 ring-violet/40 transition hover:bg-violet/25">
-            <GridIcon className="h-4 w-4" /> Switch Module
-          </button>
-        )}
         {hasReceptor && (
           <button onClick={onClear} title="Clear workspace and start a new run, background jobs keep running — track them in Jobs."
             className="flex items-center gap-2 rounded-lg bg-ink-800/70 px-3 py-2 text-[13px] font-medium text-slate-300 transition hover:bg-ink-700 hover:text-white">
@@ -798,15 +856,12 @@ function TopBar({ onRun, running, bestAffinity, isScreen, covalent, receptorName
             </span>
           )}
         </button>
-        <button data-testid="btn-run" onClick={onRun} disabled={running}
-          className={`flex items-center gap-2 rounded-xl bg-gradient-to-r from-accent to-accent-dim px-4 py-2 font-semibold text-ink-950 shadow-lg transition hover:brightness-110 disabled:opacity-60 ${covalent ? 'text-[11px]' : 'text-[13px]'}`}>
-          {running
-            ? <><Spinner /> {covalent ? (isScreen ? 'Covalent screening…' : 'Covalent docking…') : (isScreen ? 'Screening…' : 'Docking…')}</>
-            : <><PlayIcon className="h-4 w-4" />
-                {covalent ? (isScreen ? 'Run Covalent Screening' : 'Run Covalent Docking') : (isScreen ? 'Run Screening' : 'Run Docking')}
-                {covalent && <span className="ml-0.5 font-medium text-ink-950/70">· Vina</span>}
-              </>}
-        </button>
+        {onSwitchModules && (
+          <button onClick={onSwitchModules} title="Switch modules — running jobs keep going"
+            className="flex items-center gap-2 rounded-lg bg-violet/15 px-3 py-2 text-[13px] font-semibold text-violet ring-1 ring-violet/40 transition hover:bg-violet/25">
+            <GridIcon className="h-4 w-4" /> Switch Module
+          </button>
+        )}
       </div>
     </header>
   )
@@ -1383,7 +1438,7 @@ function AiPanel({ active, mode, receptor, box, ligProps, ligandSmiles, dockRes,
 /* ------------------------------------------------------------------ */
 /*  Results dashboard                                                 */
 /* ------------------------------------------------------------------ */
-function ResultsView({ result, receptorName, receptor, ligandSmiles }) {
+function ResultsView({ result, receptorName, receptor, ligandSmiles, mmRes, mmBusy, mmErr, onRunMmgbsa, onClearMm }) {
   const [viewMode, setViewMode] = useState('off') // 'off' (structure only) | '3d' | '2d' — interaction view
   const [exportOpen, setExportOpen] = useState(false)
   const [validateOpen, setValidateOpen] = useState(false)
@@ -1391,8 +1446,40 @@ function ResultsView({ result, receptorName, receptor, ligandSmiles }) {
   const [minBusy, setMinBusy] = useState(false)
   const [minRes, setMinRes] = useState(null) // {pdb, energy_before, energy_after}
   const [selPose, setSelPose] = useState(0) // which docked pose is shown in the viewer
+  // ssMM/GBSA binding-energy estimate
+  const [mmAvail, setMmAvail] = useState(null)   // null=unknown, true/false=engine present
+  const [mmInstallable, setMmInstallable] = useState(false)  // a bundle exists for this platform
+  const [mmInstalling, setMmInstalling] = useState(false)
+  const [mmInstallMsg, setMmInstallMsg] = useState('')
+  const [mmCharges, setMmCharges] = useState('mmff94')
+  const [mmEntropy, setMmEntropy] = useState(false)
+  const [resSpin, setResSpin] = useState(false)   // user-controlled rotation of the results viewer
+  // mmRes / mmBusy / mmErr / onRunMmgbsa / onClearMm are lifted to App (survive navigation)
 
-  function selectPose(i) { setSelPose(i); setMinRes(null) } // reset any minimized overlay on switch
+  function refreshMmStatus() {
+    return api.mmgbsaStatus()
+      .then((r) => { setMmAvail(!!r.available); setMmInstallable(!!r.installable) })
+      .catch(() => setMmAvail(false))
+  }
+  useEffect(() => { refreshMmStatus() }, [])
+
+  // one-time engine setup: download + unpack the binding-energy engine, then re-check
+  async function installEngine() {
+    setMmInstalling(true); setMmInstallMsg('Starting…')
+    try {
+      const { job_id, already } = await api.mmgbsaInstall()
+      if (already) { await refreshMmStatus(); return }
+      for (;;) {
+        await new Promise((r) => setTimeout(r, 1500))
+        const job = await api.getJob(job_id)
+        setMmInstallMsg(job.progress?.msg || 'Setting up…')
+        if (job.status === 'done') { await refreshMmStatus(); setMmInstallMsg(''); break }
+        if (job.status === 'error') { setMmInstallMsg(job.error || 'Setup failed.'); break }
+      }
+    } catch (e) { setMmInstallMsg(String(e?.message || e)) } finally { setMmInstalling(false) }
+  }
+
+  function selectPose(i) { setSelPose(i); setMinRes(null); onClearMm?.() } // reset overlays on switch
 
   async function runMinimize() {
     setMinBusy(true)
@@ -1404,6 +1491,20 @@ function ResultsView({ result, receptorName, receptor, ligandSmiles }) {
   function downloadMin() {
     if (!minRes?.pdb) return
     saveFile(`${(receptorName || 'complex')}_minimized.pdb`, minRes.pdb, 'chemical/x-pdb')
+  }
+
+  function startMmgbsa() {
+    onRunMmgbsa?.({
+      complex_id: sel.complex_id,
+      complex_pdb: sel.complex_id ? undefined : selComplex,
+      ligand_smiles: ligandSmiles || undefined,
+      charges: mmCharges,
+      entropy_c: mmEntropy ? 1.0 : 0.0,
+    })
+  }
+  function downloadMm() {
+    if (!mmRes?.pdb) return
+    saveFile(`${(receptorName || 'complex')}_ssMMGBSA.pdb`, mmRes.pdb, 'chemical/x-pdb')
   }
 
   const poses = result?.poses || []
@@ -1448,13 +1549,91 @@ function ResultsView({ result, receptorName, receptor, ligandSmiles }) {
       </div>
 
       <div className="grid grid-cols-4 gap-4">
-        <Kpi label="Best affinity" value={fmt(best)} unit="kcal/mol" tone="accent" />
+        <Kpi label="Docking affinity" value={fmt(best)} unit="kcal/mol · Vina" tone="accent" />
         <Kpi label="Ligand efficiency" value={fmt(result?.ligand_efficiency)} unit="kcal/heavy atom" />
         <Kpi label="Poses generated" value={poses.length} unit="modes" />
         <Kpi label="Drug-likeness (QED)" value={props.qed ?? '—'} unit={result?.lipinski_pass ? 'Lipinski ✓' : 'Lipinski ✗'} />
       </div>
 
       {result?.covalent && <CovalentBanner cov={result.covalent} />}
+
+      {/* ssMM/GBSA binding free energy — its own distinguished card, above the fold */}
+      <div className="glass rounded-2xl p-4 ring-1 ring-accent/20">
+        <div className="flex flex-wrap items-start justify-between gap-x-4 gap-y-2">
+          <div className="min-w-0">
+            <div className="flex items-center gap-2">
+              <h3 className="text-[14px] font-semibold text-white">Binding free energy</h3>
+              <span className="rounded bg-accent/15 px-1.5 py-0.5 text-[10px] font-bold tracking-wide text-accent">ssMM/GBSA</span>
+            </div>
+            <p className="mt-0.5 text-[10.5px] text-slate-500">Single minimised structure · GBn2 implicit solvent · ff14SB / GAFF2 · relative ranking</p>
+          </div>
+          {mmAvail !== false && (
+            <div className="flex flex-wrap items-center gap-2">
+              <button onClick={startMmgbsa} disabled={mmBusy || !selComplex} title="Single-structure MM-GBSA binding free energy (GBn2 implicit solvent)"
+                className="flex items-center gap-1.5 rounded-lg bg-accent/15 px-3 py-1.5 text-[12px] font-semibold text-accent ring-1 ring-accent/30 hover:bg-accent/25 disabled:opacity-50">
+                {mmBusy && <span className="h-3 w-3 animate-spin rounded-full border-2 border-accent/30 border-t-accent" />}
+                {mmBusy ? 'Calculating…' : (mmRes ? 'Recompute' : 'Estimate ΔG')}
+              </button>
+              <select value={mmCharges} onChange={(e) => setMmCharges(e.target.value)} disabled={mmBusy}
+                className="rounded-md bg-ink-900 px-2 py-1.5 text-[11px] text-slate-200 outline-none ring-1 ring-ink-700 focus:ring-accent/60">
+                <option value="mmff94">MMFF94 (fast)</option>
+                <option value="am1bcc">AM1-BCC (accurate)</option>
+              </select>
+              <label className="flex items-center gap-1.5 text-[11px] text-slate-400">
+                <input type="checkbox" checked={mmEntropy} onChange={(e) => setMmEntropy(e.target.checked)} disabled={mmBusy} />
+                entropy
+              </label>
+            </div>
+          )}
+        </div>
+
+        {mmAvail === false && (
+          <div className="mt-3 border-t border-ink-700/60 pt-3 text-[11px]">
+            {mmInstalling ? (
+              <span className="flex items-center gap-2 text-slate-400">
+                <span className="h-3.5 w-3.5 animate-spin rounded-full border-2 border-accent/30 border-t-accent" />
+                {mmInstallMsg || 'Setting up the binding-energy engine…'}
+              </span>
+            ) : mmInstallable ? (
+              <div className="flex flex-wrap items-center gap-2">
+                <button onClick={installEngine}
+                  className="rounded-lg bg-accent/15 px-3 py-1.5 text-[12px] font-semibold text-accent ring-1 ring-accent/30 hover:bg-accent/25">
+                  Set up engine · one-time download
+                </button>
+                <span className="text-slate-500">Downloaded once into the app, then runs offline. Enables ssMM/GBSA (both charge models).</span>
+                {mmInstallMsg && <span className="text-red-400">{mmInstallMsg}</span>}
+              </div>
+            ) : (
+              <span className="text-slate-500">The binding-energy engine is not available for this platform yet.</span>
+            )}
+          </div>
+        )}
+        {mmBusy && <div className="mt-3 flex items-center gap-2 border-t border-ink-700/60 pt-3 text-[11px] text-slate-400"><span className="h-3.5 w-3.5 animate-spin rounded-full border-2 border-accent/30 border-t-accent" /> Minimising in implicit solvent and scoring… (~1–3 min)</div>}
+        {mmErr && !mmBusy && <p className="mt-3 border-t border-ink-700/60 pt-3 text-[11px] text-red-400">{String(mmErr).slice(0, 120)}</p>}
+
+        {mmRes && !mmBusy && (
+          <div className="mt-3 flex flex-wrap items-center gap-x-4 gap-y-2 border-t border-ink-700/60 pt-3">
+            <div className="flex items-baseline gap-1.5">
+              <span className="font-mono text-[26px] font-semibold text-accent">{fmt(mmEntropy ? mmRes.dG_corrected : mmRes.dG_bind)}</span>
+              <span className="text-[11px] text-slate-400">kcal/mol&nbsp;·&nbsp;ΔG<sub>bind</sub></span>
+            </div>
+            <div className="flex flex-wrap gap-2">
+              {[['vdW', mmRes.vdw], ['Elec', mmRes.electrostatic], ['Solv', mmRes.solvation],
+                ...(mmEntropy ? [['−TΔS', mmRes.entropy_penalty]] : [])].map(([k, v], i) => (
+                <div key={i} className="rounded-lg bg-ink-900/70 px-2.5 py-1 text-center ring-1 ring-ink-700/60">
+                  <div className="font-mono text-[12px] text-slate-100">{fmt(v)}</div>
+                  <div className="text-[9px] uppercase tracking-wide text-slate-500">{k}</div>
+                </div>
+              ))}
+            </div>
+            <div className="ml-auto flex items-center gap-3">
+              <span className="text-[9px] text-slate-600">{mmRes.charges}{mmRes.n_rot != null ? ` · N_rot ${mmRes.n_rot}` : ''}{mmRes.min_converged ? ` · ${mmRes.min_steps} steps` : ''}</span>
+              <button onClick={downloadMm} className="rounded-md bg-ink-800 px-2.5 py-1 text-[11px] text-slate-300 hover:bg-ink-700 hover:text-white">Download PDB</button>
+              <button onClick={onClearMm} className="text-[11px] text-slate-500 hover:text-slate-300">reset</button>
+            </div>
+          </div>
+        )}
+      </div>
 
       <div className="grid grid-cols-4 gap-4">
         <div className="col-span-3 flex flex-col gap-4">
@@ -1474,6 +1653,12 @@ function ResultsView({ result, receptorName, receptor, ligandSmiles }) {
                     </button>
                   ))}
                 </div>
+                {viewMode !== '2d' && (
+                  <button onClick={() => setResSpin((v) => !v)} title="Rotate the structure"
+                    className={`rounded-md px-2.5 py-1 text-[11px] font-medium transition ${resSpin ? 'bg-ink-600 text-white' : 'bg-ink-800/80 text-slate-400 hover:text-slate-200'}`}>
+                    Spin
+                  </button>
+                )}
                 <span className="font-mono text-[12px] text-accent">{fmt(selAff)} kcal/mol</span>
               </div>
             </div>
@@ -1486,8 +1671,8 @@ function ResultsView({ result, receptorName, receptor, ligandSmiles }) {
             ) : (
               <>
                 <div className="h-[360px]">
-                  <MoleculeViewer style="cartoon" showLigand spin={false} showInteractions={viewMode === '3d'}
-                    pdb={minRes?.pdb || selComplex} ligResn="LIG"
+                  <MoleculeViewer style="cartoon" showLigand spin={resSpin} showInteractions={viewMode === '3d'}
+                    pdb={mmRes?.pdb || minRes?.pdb || selComplex} ligResn="LIG"
                     covalentTarget={sel.covalent && sel.covalent.nuc_xyz ? {
                       chain: sel.covalent.chain, resi: sel.covalent.nuc_resi, residueLabel: sel.covalent.residue,
                       atomLabel: sel.covalent.atom_label, nuc: sel.covalent.nuc_xyz,
@@ -1518,6 +1703,7 @@ function ResultsView({ result, receptorName, receptor, ligandSmiles }) {
                   {minRes?.error && <span className="text-[11px] text-red-400">{minRes.error}</span>}
                   <span className="ml-auto text-[10px] text-slate-600">UFF · geometric cleanup, not rigorous MM</span>
                 </div>
+
               </>
             )}
           </div>
@@ -1589,6 +1775,7 @@ function ResultsView({ result, receptorName, receptor, ligandSmiles }) {
           scoring: result?.params?.scoring || 'vina', exhaustiveness: result?.params?.exhaustiveness ?? 16, params: result?.params,
           ligand: ligName, pose: selNum, affinity: selAff, complex_pdb: selComplex,
           poses, interactions: selInter, rows: [{ name: ligName, affinity: best, mw: props.mw, logp: props.logp, qed: props.qed }],
+          mmgbsa: (mmRes && !mmBusy) ? mmRes : null,
         }} />
       )}
 

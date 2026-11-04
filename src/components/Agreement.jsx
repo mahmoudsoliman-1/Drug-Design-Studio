@@ -8,7 +8,7 @@ const TERMS = [
   ['Academic & non-commercial use only',
     'Drug Design Studio (DDS) is provided free of charge for academic and other non-commercial use only. You may use and share the software, but you may NOT modify, edit, reverse-engineer, decompile, or create derivative works from it.'],
   ['No commercial or industrial use',
-    'Use for any commercial, industrial, for-profit, or fee-generating purpose is not permitted under this licence. For a commercial licence, contact soliman@ukzn.ac.za.'],
+    'Use for any commercial, industrial, for-profit, or fee-generating purpose is not permitted under this licence. For a commercial licence, contact the author via https://www.soliman-lab.com/.'],
   ['Research tool — not for clinical or regulatory use',
     'DDS is a computational research and educational tool. Its outputs (scores, poses, predicted interactions, and any AI commentary) are predictions, not measurements, and may be inaccurate. It is not a medical device and must not be used for clinical, diagnostic, therapeutic, or regulatory decisions. You are responsible for independently validating all results.'],
   ['Intellectual property',

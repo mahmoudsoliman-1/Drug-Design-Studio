@@ -1,4 +1,4 @@
-import { useState, useMemo } from 'react'
+import { useState, useMemo, useEffect } from 'react'
 import {
   ResponsiveContainer, BarChart, Bar, XAxis, YAxis, Tooltip, Cell, CartesianGrid,
 } from 'recharts'
@@ -156,13 +156,23 @@ export function LibraryCenter({ smiles }) {
 /* ================================================================== */
 /*  Rankings dashboard (post-run)                                     */
 /* ================================================================== */
-export function ScreeningResults({ result, receptor, box, scoring }) {
+export function ScreeningResults({ result, receptor, box, scoring, mmMap = {}, mmBusy = false, mmProg = '', onRunBatch }) {
   const [filter, setFilter] = useState('all')
   const [query, setQuery] = useState('')
   const [exportOpen, setExportOpen] = useState(false)
   const [map2D, setMap2D] = useState(null)
   const [view3D, setView3D] = useState(null)   // {id, affinity, pdb}
   const [busy3D, setBusy3D] = useState(null)    // id being loaded
+  // batch ssMM/GBSA rescoring of the top-N docking hits (mmMap / mmBusy / mmProg /
+  // onRunBatch are lifted to App so results survive navigation while the job runs)
+  const [mmAvail, setMmAvail] = useState(null)
+  const [batchN, setBatchN] = useState(10)
+  const [rankBy, setRankBy] = useState('affinity')  // 'affinity' | 'mmgbsa'
+
+  useEffect(() => { api.mmgbsaStatus().then((r) => setMmAvail(!!r.available)).catch(() => setMmAvail(false)) }, [])
+  const nScored = Object.values(mmMap || {}).filter((v) => v && v.dG_bind != null).length
+  // once some compounds are scored, default the table ranking to ΔG (once)
+  useEffect(() => { if (nScored > 0) setRankBy('mmgbsa') }, [nScored > 0])
 
   async function open3D(l) {
     if (!l.complex_id) return
@@ -173,6 +183,12 @@ export function ScreeningResults({ result, receptor, box, scoring }) {
     } catch (e) { /* ignore */ } finally { setBusy3D(null) }
   }
 
+  function runBatch() {
+    const targets = ranked.slice(0, batchN).filter((r) => r.complex_id)
+    const items = targets.map((r) => ({ id: r.id, complex_id: r.complex_id, smiles: r.smiles }))
+    if (items.length) onRunBatch?.(items)
+  }
+
   const cov = result?.covalent
   const all = (result?.results || []).filter((r) => r.affinity != null)
   // covalent runs keep the engine's ranking (compatible hits first); otherwise sort by affinity
@@ -180,9 +196,19 @@ export function ScreeningResults({ result, receptor, box, scoring }) {
   const strongCut = -8.5
   const target = receptor?.name || 'Receptor'
 
-  const rows = ranked
+  const dGof = (l) => { const v = mmMap[l.id]; return (v && v.dG_bind != null) ? v.dG_bind : null }
+  let rows = ranked
     .filter((l) => (filter === 'druglike' ? l.lipinski_pass : filter === 'strong' ? l.affinity <= strongCut : true))
     .filter((l) => l.id.toLowerCase().includes(query.toLowerCase()) || (l.smiles || '').toLowerCase().includes(query.toLowerCase()))
+  if (rankBy === 'mmgbsa') {
+    rows = [...rows].sort((a, b) => {
+      const da = dGof(a), db = dGof(b)
+      if (da == null && db == null) return a.affinity - b.affinity
+      if (da == null) return 1
+      if (db == null) return -1
+      return da - db
+    })
+  }
 
   const hist = useMemo(() => {
     const bins = [-13, -12, -11, -10, -9, -8, -7, -6, -5, -4]
@@ -289,12 +315,48 @@ export function ScreeningResults({ result, receptor, box, scoring }) {
           </button>
         </div>
 
+        {/* batch ssMM/GBSA rescoring of the top-N docking hits */}
+        <div className="mb-3 flex flex-wrap items-center gap-2 rounded-xl bg-ink-900/50 px-3 py-2 ring-1 ring-accent/15">
+          <span className="text-[11px] font-semibold text-white">Binding free energy</span>
+          <span className="rounded bg-accent/15 px-1.5 py-0.5 text-[10px] font-bold tracking-wide text-accent">ssMM/GBSA</span>
+          {mmAvail === false ? (
+            <span className="text-[11px] text-slate-500">engine not installed — set it up from a single docking result first.</span>
+          ) : (
+            <>
+              <select value={batchN} onChange={(e) => setBatchN(+e.target.value)} disabled={mmBusy}
+                className="rounded-md bg-ink-900 px-2 py-1 text-[11px] text-slate-200 outline-none ring-1 ring-ink-700 focus:ring-accent/60">
+                <option value={5}>Top 5</option>
+                <option value={10}>Top 10</option>
+                <option value={20}>Top 20</option>
+              </select>
+              <button onClick={runBatch} disabled={mmBusy}
+                className="flex items-center gap-1.5 rounded-lg bg-accent/15 px-3 py-1.5 text-[12px] font-semibold text-accent ring-1 ring-accent/30 hover:bg-accent/25 disabled:opacity-50">
+                {mmBusy && <span className="h-3 w-3 animate-spin rounded-full border-2 border-accent/30 border-t-accent" />}
+                {mmBusy ? 'Rescoring…' : 'Rescore top hits'}
+              </button>
+              <span className="text-[10px] text-slate-500">{mmBusy ? mmProg : `re-rank the top ${batchN} by MM-GBSA ΔG · ≈ ${batchN * 3} min · MMFF94`}</span>
+              {nScored > 0 && !mmBusy && (
+                <div className="ml-auto flex items-center gap-1.5">
+                  <span className="text-[10px] text-slate-500">Rank by</span>
+                  <div className="flex rounded-lg bg-ink-800/80 p-0.5">
+                    {[['affinity', 'Docking'], ['mmgbsa', 'ΔG']].map(([id, label]) => (
+                      <button key={id} onClick={() => setRankBy(id)}
+                        className={`rounded-md px-2.5 py-1 text-[11px] font-medium transition ${rankBy === id ? 'bg-ink-600 text-white' : 'text-slate-400 hover:text-slate-200'}`}>{label}</button>
+                    ))}
+                  </div>
+                </div>
+              )}
+            </>
+          )}
+        </div>
+
         <table className="w-full text-left">
           <thead>
             <tr className="border-b border-ink-700/60 text-[10px] uppercase tracking-wider text-slate-500">
               <th className="pb-2 font-medium">Rank</th>
               <th className="pb-2 font-medium">Compound</th>
               <th className="pb-2 font-medium">Affinity</th>
+              <th className="pb-2 font-medium" title="Single-structure MM-GBSA binding free energy">ΔG&nbsp;(MM-GBSA)</th>
               {cov && <th className="pb-2 font-medium">Covalent</th>}
               <th className="pb-2 font-medium">Score</th>
               <th className="pb-2 font-medium">MW</th>
@@ -319,6 +381,15 @@ export function ScreeningResults({ result, receptor, box, scoring }) {
                     <div className="max-w-[200px] truncate font-mono text-[10px] text-slate-600" title={l.smiles}>{l.smiles}</div>
                   </td>
                   <td className="py-2.5 font-mono font-semibold text-accent">{l.affinity}</td>
+                  <td className="py-2.5 font-mono">
+                    {(() => {
+                      const v = mmMap[l.id]
+                      if (mmBusy && !v) return <span className="text-slate-600">…</span>
+                      if (!v) return <span className="text-slate-600">—</span>
+                      if (v.error) return <span className="text-[10px] text-amber-400" title={v.error}>fail</span>
+                      return <span className="font-semibold text-sky-300">{v.dG_bind}</span>
+                    })()}
+                  </td>
                   {cov && (
                     <td className="py-2.5">
                       {l.covalent_distance == null
@@ -403,8 +474,9 @@ export function ScreeningResults({ result, receptor, box, scoring }) {
           mode: 'screen', target, pdb: target,
           scoring: result?.params?.scoring || scoring || 'vina', exhaustiveness: result?.params?.exhaustiveness ?? 8, params: result?.params,
           ligand: ranked[0].id, pose: 1, affinity: ranked[0].affinity, interactions: [],
-          rows: ranked.map((l) => ({ name: l.id, affinity: l.affinity, mw: l.mw, logp: l.logp, qed: l.qed })),
+          rows: ranked.map((l) => ({ name: l.id, affinity: l.affinity, mw: l.mw, logp: l.logp, qed: l.qed, mmgbsa_dG: (mmMap[l.id] || {}).dG_bind ?? null })),
           screenRows: ranked.slice(0, 10).map((l) => ({ id: l.id, affinity: l.affinity, complex_id: l.complex_id })),
+          mmgbsa: nScored > 0 ? { batch: true, charges: 'mmff94', n: nScored } : null,
         }} />
       )}
     </div>

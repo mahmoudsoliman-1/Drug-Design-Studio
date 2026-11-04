@@ -118,8 +118,15 @@ def pose_to_pdb_hetatm(pose_pdbqt, resname="LIG", start_serial=9000):
         name = l[12:16]
         x, y, z = l[30:38], l[38:46], l[46:54]
         adtype = l[77:79].strip() if len(l) >= 78 else ""
+        # skip meeko macrocycle "glue" pseudo-atoms (AutoDock type G0/G1): dummy
+        # placeholders inserted to open/reclose a flexible ring during sampling.
+        # They carry no element and break any downstream RDKit rebuild of the
+        # ligand (MM-GBSA, re-docking validation). The real ring carbons are the
+        # separate CG0/CG1 atoms, which are kept and typed as carbon.
+        if adtype[:1] == "G":
+            continue
         elem = _elem(adtype, name)
-        if elem == "H":
+        if elem in ("H", "G"):
             continue
         lines.append("HETATM%5d %4s %3s L 999    %8s%8s%8s  1.00  0.00          %2s" %
                      (serial, name[:4], resname, x, y, z, elem.rjust(2)))

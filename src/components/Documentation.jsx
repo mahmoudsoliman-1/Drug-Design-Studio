@@ -7,13 +7,14 @@ import Logo from './Logo.jsx'
 /*  with overview, install, protocols/methods, quick start, references. */
 /* ------------------------------------------------------------------ */
 
-export const DOC_VERSION = 'v4.1'
+export const DOC_VERSION = 'v5.0'
 
 export const CITATION = 'Mahmoud E. Soliman. Drug Design Studio (DDS): An all-in-one cross-platform for covalent/non-covalent docking, covalent binders virtual screening and protein–ligand interaction analysis. (Under review).'
-export const CITATION2 = 'Mahmoud E. Soliman. Drug Design Suite (DDS) 2.0: A Unified Platform for Network Pharmacology Integrated with Docking and Virtual Screening Workflow for Covalent/Non-Covalent Binders. (Under review).'
+export const CITATION2 = 'Mahmoud E. Soliman. Drug Design Studio (DDS) 2.0: A Unified Platform for Network Pharmacology Integrated with Docking and Virtual Screening Workflow for Covalent/Non-Covalent Binders, Int. J. Mol. Sci. 2026, 27(17), 7874. https://doi.org/10.3390/ijms27177874'
 export const CITATION3 = 'Mahmoud E. Soliman. Drug Design Studio (DDS) 3.0: A Streamlined QSAR, 3D-QSAR and Pharmacophore Modelling Platform Coupling Ligand-Based Activity Prediction to Covalent and Non-Covalent Structure-Based Discovery. (Under review).'
-export const CITATION4 = 'Mahmoud E. Soliman. Drug Design Studio (DDS) 4.0: A Nanopharmaceutical Simulation Platform for Automated Modelling of Drug–Nanocarrier Encapsulation and Drug–Drug Complexation. (Under review).'
-export const CITATIONS = [CITATION, CITATION2, CITATION3, CITATION4]
+export const CITATION4 = 'Mahmoud E. Soliman. Drug Design Studio (DDS) 4.0: A Nanopharmaceutical Simulation Platform for Automated Modelling of Drug–Nanocarrier Encapsulation and Drug–Drug Complexation, Int. J. Mol. Sci. 2026, 27(21), 9832. https://www.mdpi.com/1422-0067/27/21/9832'
+// Display order as requested: DDS 2.0, DDS 4.0, DDS (all-in-one), DDS 3.0
+export const CITATIONS = [CITATION2, CITATION4, CITATION, CITATION3]
 
 const TONE = {
   teal:    { bg: 'bg-accent/15',        text: 'text-accent',        ring: 'ring-accent/30' },
@@ -34,7 +35,7 @@ const MODULES = [
 const MODULE_SECTIONS = {
   docking: [
     ['about', 'Overview'], ['features', 'Capabilities'], ['install', 'Installation'],
-    ['theory', 'System setup'], ['docking', 'Docking'], ['covalent', 'Covalent docking'],
+    ['theory', 'System setup'], ['docking', 'Docking'], ['mmgbsa', 'Binding energy'], ['covalent', 'Covalent docking'],
     ['tutorial', 'Tutorial'], ['export', 'Export & MD'], ['cite', 'Cite DDS'],
   ],
   netpharm: [
@@ -155,6 +156,16 @@ function DockingDocs() {
           <Card tone="teal" title="Pose cleanup">An optional UFF / MMFF94 energy-minimization relieves steric clashes in the ligand, pocket or whole complex — a light geometric relaxation, not a rigorous MM simulation.</Card>
         </div>
         <Callout tone="emerald"><b>Validate docking results.</b> For cognate re-docking, a <b>“Validate Docking Results”</b> button computes the heavy-atom <b>RMSD</b> between the docked pose and the experimental ligand and displays a 3D <b>overlay</b> (docked pose magenta, native crystal ligand green). An RMSD below ≈ 2 Å indicates the docking reproduces the crystallographic pose. Works for covalent poses via common-substructure alignment.</Callout>
+      </Section>
+
+      <Section id="doc-mmgbsa" tone="sky" icon={<Cpu />} title="Binding energy — ssMM/GBSA" sub="Single-structure MM-GBSA free-energy estimate">
+        <p>From the results, one click estimates the <b>protein–ligand binding free energy</b> of the selected pose using a <b>single-structure MM-GBSA</b> scheme. The complex is energy-minimised in a <b>generalised-Born implicit-solvent</b> model, and the binding free energy is evaluated on that single minimised structure as <b>ΔG<sub>bind</sub> = E(complex) − E(receptor) − E(ligand)</b>, where each energy combines the molecular-mechanics interaction terms (van der Waals and electrostatic) with the generalised-Born solvation energy. No molecular-dynamics sampling is used, which keeps the calculation fast; the estimate is intended for <b>relative ranking</b> of poses and ligands rather than absolute affinity.</p>
+        <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+          <Card tone="sky" title="Force field &amp; charges">The protein is described by the Amber <b>ff14SB</b> force field and the ligand by <b>GAFF2</b>. Ligand partial charges are assigned with the fast classical <b>MMFF94</b> model (default) or the semi-empirical <b>AM1-BCC</b> model (higher cost, marginally higher accuracy).</Card>
+          <Card tone="teal" title="Energy decomposition">The binding free energy is reported with its physical components — <b>van der Waals</b>, <b>electrostatic</b> and <b>generalised-Born solvation</b> — so the origin of binding can be inspected alongside the total ΔG.</Card>
+        </div>
+        <Callout tone="sky"><b>Entropy (optional).</b> A configurational-entropy penalty proportional to the ligand's number of rotatable bonds can be added to ΔG<sub>bind</sub> to approximate the entropic cost of binding.</Callout>
+        <Callout tone="amber"><b>Interpretation.</b> The score is a fast, physics-based estimate for <b>ranking across a wide affinity range</b>; it is not a rigorous absolute free energy and is best used to prioritise poses and compounds rather than to resolve near-equal binders.</Callout>
       </Section>
 
       <Section id="doc-covalent" tone="emerald" icon={<Link />} title="Covalent docking — the two protocols" sub="Warhead perception and reactive-residue targeting">
@@ -478,7 +489,7 @@ function Footer() {
     <div className="rounded-2xl border border-ink-700/60 bg-ink-900/50 p-4 text-center">
       <div className="text-[12.5px] font-semibold text-white">Drug Design Studio (DDS) · {DOC_VERSION}</div>
       <div className="mt-1 text-[11px] leading-relaxed text-slate-500">© Prof. Mahmoud E. Soliman — Molecular Bio-computation &amp; Drug Design Laboratory, University of KwaZulu-Natal.<br />Academic &amp; Non-Commercial License. Please cite DDS if it supports your research (see “Cite DDS”).</div>
-      <div className="mt-2 text-[11px] text-accent">soliman@ukzn.ac.za · http://soliman.ukzn.ac.za/DDS.aspx</div>
+      <div className="mt-2 text-[11px] text-accent">https://www.soliman-lab.com/</div>
     </div>
   )
 }

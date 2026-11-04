@@ -18,7 +18,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from typing import Optional, List
 
-from ddsengine import prep, dock, interactions, analysis, minimize, covalent, validate as validate_mod, netpharm, pdbmap, qsar, nanobio
+from ddsengine import prep, dock, interactions, analysis, minimize, covalent, validate as validate_mod, netpharm, pdbmap, qsar, nanobio, mmgbsa, tissues
 
 app = FastAPI(title="Drug Design Studio Engine", version="1.0.0")
 app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"])
@@ -84,6 +84,31 @@ class MinimizeReq(BaseModel):
     mode: str = "pocket"        # ligand | pocket | complex
     forcefield: str = "uff"     # uff | mmff94
     steps: int = 500
+
+
+class MmgbsaReq(BaseModel):
+    complex_id: Optional[str] = None
+    complex_pdb: Optional[str] = None
+    ligand_smiles: Optional[str] = None
+    charges: str = "mmff94"       # mmff94 (fast, classical) | am1bcc (higher cost)
+    entropy_c: float = 0.0        # rotatable-bond entropy coefficient (0 = off)
+    steps: int = 1000             # minimisation ceiling (convergence stops earlier)
+    label: Optional[str] = None
+
+
+class MmgbsaBatchItem(BaseModel):
+    id: str
+    complex_id: Optional[str] = None
+    complex_pdb: Optional[str] = None
+    smiles: Optional[str] = None
+
+
+class MmgbsaBatchReq(BaseModel):
+    items: List[MmgbsaBatchItem]
+    charges: str = "mmff94"
+    entropy_c: float = 0.0
+    steps: int = 1000
+    label: Optional[str] = None
 
 
 class LigandPreviewReq(BaseModel):
@@ -249,6 +274,16 @@ class NanoIdentifyReq(BaseModel):
     smiles: List[str] = []
 
 
+class TissuesPredictReq(BaseModel):
+    smiles: str
+    tissues: List[str] = ["gut", "bbb", "skin", "pampa"]
+
+
+class TissuesPlaceReq(BaseModel):
+    smiles: str
+    tissue: str = "bbb"
+
+
 # --------------------------- AI (Groq / Llama) ---------------------------
 GROQ_URL = "https://api.groq.com/openai/v1/chat/completions"
 GROQ_MODEL = os.environ.get("DDS_AI_MODEL", "llama-3.3-70b-versatile")
@@ -372,9 +407,13 @@ def _summary(job):
             asm = r.get("assembly") or {}
             s["carrier"] = (r.get("carrier") or {}).get("name")
             s["interaction_energy"] = loaded.get("interaction_energy") if loaded else asm.get("interaction_energy")
-        else:
+        elif job["kind"] == "mmgbsa":
+            s["dG_bind"] = r.get("dG_bind")
+        elif job["kind"] == "mmgbsa-batch":
+            s["n"] = len(r.get("results", []))
+        elif job["kind"] == "screen":
             rows = r.get("results", [])
-            s["best_affinity"] = rows[0]["affinity"] if rows else None
+            s["best_affinity"] = rows[0].get("affinity") if rows else None
             s["n"] = r.get("n_ok")
     return s
 
@@ -690,6 +729,94 @@ def _run_nano(jid):
     _save_job(job)
 
 
+def _run_mmgbsa_install(jid):
+    job = JOBS[jid]
+    try:
+        def progress(done, total):
+            mb = 1 << 20
+            job["progress"] = {"done": done, "total": total or 1,
+                               "msg": ("Downloading engine… %d MB%s" % (done // mb, (" / %d MB" % (total // mb)) if total else ""))}
+        res = mmgbsa.install_engine(progress=progress)
+        if res.get("ok"):
+            job["result"] = res; job["status"] = "done"
+        else:
+            job["status"] = "error"; job["error"] = res.get("message") or res.get("detail") or res.get("error")
+    except Exception as e:
+        job["status"] = "error"; job["error"] = str(e)[:300]
+    _save_job(job)
+
+
+def _complex_pdb_for(complex_id=None, complex_pdb=None):
+    if complex_pdb:
+        return complex_pdb
+    if complex_id:
+        pdb = COMPLEXES.get(complex_id)
+        if pdb is None:
+            path = os.path.join(COMPLEX_DIR, complex_id + ".pdb")
+            if os.path.exists(path):
+                pdb = open(path).read()
+        return pdb
+    return None
+
+
+def _run_mmgbsa_batch(jid):
+    job = JOBS[jid]
+    r = job["request"]
+    items = r.get("items", [])
+    total = len(items)
+    out = []
+    job["progress"] = {"done": 0, "total": total, "msg": "Starting…"}
+    for i, it in enumerate(items):
+        rec = {"id": it.get("id")}
+        pdb = _complex_pdb_for(it.get("complex_id"), it.get("complex_pdb"))
+        if not pdb:
+            rec["error"] = "complex unavailable"
+        else:
+            res = mmgbsa.run(pdb, ligand_smiles=it.get("smiles"), charges=r.get("charges", "mmff94"),
+                             steps=r.get("steps", 1000), entropy_c=r.get("entropy_c", 0.0))
+            if res.get("error"):
+                rec["error"] = res.get("message") or res.get("detail") or res["error"]
+            else:
+                for k in ("dG_bind", "vdw", "electrostatic", "solvation", "dG_corrected",
+                          "entropy_penalty", "n_rot", "charges"):
+                    rec[k] = res.get(k)
+        out.append(rec)
+        # publish incrementally so the UI fills in ΔG as each compound completes
+        job["result"] = {"results": list(out)}
+        job["progress"] = {"done": i + 1, "total": total, "msg": "Scored %d/%d" % (i + 1, total)}
+        _save_job(job)
+    job["result"] = {"results": out}
+    job["status"] = "done"
+    _save_job(job)
+
+
+def _run_mmgbsa(jid):
+    job = JOBS[jid]
+    r = job["request"]
+    try:
+        pdb = r.get("complex_pdb")
+        if not pdb and r.get("complex_id"):
+            pdb = COMPLEXES.get(r["complex_id"])
+            if pdb is None:
+                path = os.path.join(COMPLEX_DIR, r["complex_id"] + ".pdb")
+                if os.path.exists(path):
+                    pdb = open(path).read()
+        if not pdb:
+            raise RuntimeError("no complex available to score")
+        res = mmgbsa.run(pdb, ligand_smiles=r.get("ligand_smiles"),
+                         charges=r.get("charges", "mmff94"), steps=r.get("steps", 1000),
+                         entropy_c=r.get("entropy_c", 0.0))
+        if res.get("error"):
+            job["status"] = "error"; job["error"] = res.get("message") or res.get("detail") or res["error"]
+        else:
+            if res.get("pdb"):                       # persist the minimised complex for the viewer
+                cid = uuid.uuid4().hex[:12]; _save_complex(cid, res["pdb"]); res["complex_id"] = cid
+            job["result"] = res; job["status"] = "done"
+    except Exception as e:
+        job["status"] = "error"; job["error"] = str(e)[:300]
+    _save_job(job)
+
+
 # --------------------------- receptor helpers ---------------------------
 def _store_receptor(pdb_text, keep_waters=False, keep_ions=False, remove=None, rid=None, ph=7.4):
     rec_pdbqt, protein_pdb, display_pdb, ligand_pdb, meta = prep.prepare_receptor(
@@ -958,6 +1085,70 @@ def nano_run(req: NanoRunReq):
     job = _new_job("nano", label, req.dict(), None)
     _save_job(job)
     EXECUTOR.submit(_run_nano, job["job_id"])
+    return {"job_id": job["job_id"]}
+
+
+# --------------------------- Tissues (membrane permeability) ---------------------------
+@app.get("/api/tissues/catalog")
+def tissues_catalog():
+    return tissues.tissue_catalog()
+
+
+@app.post("/api/tissues/predict")
+def tissues_predict(req: TissuesPredictReq):
+    res = tissues.predict(req.smiles, req.tissues)
+    if res.get("error"):
+        raise HTTPException(400, res["error"])
+    return res
+
+
+@app.post("/api/tissues/place")
+def tissues_place(req: TissuesPlaceReq):
+    res = tissues.place(req.smiles, req.tissue)
+    if res.get("error"):
+        raise HTTPException(400, res["error"])
+    return res
+
+
+@app.get("/api/mmgbsa/status")
+def mmgbsa_status():
+    return {"available": mmgbsa.engine_available(), "installable": mmgbsa.installable()}
+
+
+@app.post("/api/mmgbsa/install")
+def submit_mmgbsa_install():
+    if mmgbsa.engine_available():
+        return {"already": True}
+    if not mmgbsa.installable():
+        raise HTTPException(503, "no binding-energy engine is available for this platform")
+    job = _new_job("mmgbsa-install", "Binding-energy engine setup", {}, None)
+    EXECUTOR.submit(_run_mmgbsa_install, job["job_id"])
+    return {"job_id": job["job_id"]}
+
+
+@app.post("/api/mmgbsa/batch")
+def submit_mmgbsa_batch(req: MmgbsaBatchReq):
+    if not mmgbsa.engine_available():
+        raise HTTPException(503, "binding-energy engine not installed")
+    items = [it.dict() for it in req.items][:20]   # hard cap on batch size
+    if not items:
+        raise HTTPException(400, "no compounds to score")
+    payload = {**req.dict(), "items": items}
+    job = _new_job("mmgbsa-batch", req.label or ("Batch ΔG · %d compounds" % len(items)), payload, None)
+    job["progress"] = {"done": 0, "total": len(items)}
+    EXECUTOR.submit(_run_mmgbsa_batch, job["job_id"])
+    return {"job_id": job["job_id"]}
+
+
+@app.post("/api/mmgbsa")
+def submit_mmgbsa(req: MmgbsaReq):
+    if not mmgbsa.engine_available():
+        raise HTTPException(503, "binding-energy engine not installed")
+    if not (req.complex_pdb or req.complex_id):
+        raise HTTPException(400, "provide complex_pdb or complex_id")
+    label = req.label or "Binding energy (ssMM/GBSA)"
+    job = _new_job("mmgbsa", label, req.dict(), None)
+    EXECUTOR.submit(_run_mmgbsa, job["job_id"])
     return {"job_id": job["job_id"]}
 
 

@@ -33,8 +33,16 @@ def _mol_from_block(block, smiles):
 
 
 def _lig_block(complex_pdb, resn):
-    return "\n".join(l for l in complex_pdb.splitlines()
-                     if l.startswith(("ATOM", "HETATM")) and l[17:20].strip() == resn)
+    # drop meeko macrocycle "glue" pseudo-atoms (element/name 'G') — dummy
+    # placeholders that are not real atoms and break RDKit perception
+    out = []
+    for l in complex_pdb.splitlines():
+        if not (l.startswith(("ATOM", "HETATM")) and l[17:20].strip() == resn):
+            continue
+        if l[76:78].strip().upper() == "G" or l[12:16].strip().upper() == "G":
+            continue
+        out.append(l)
+    return "\n".join(out)
 
 
 def _rmsd_over(ca, cb, mapping):

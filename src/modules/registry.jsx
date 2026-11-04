@@ -16,6 +16,7 @@ import DockingModule from '../App.jsx'
 import NetPharmModule from './netpharm/NetPharmModule.jsx'
 import QsarModule from './qsar/QsarModule.jsx'
 import NanoBioModule from './nanobio/NanoBioModule.jsx'
+import TissuesModule from './tissues/TissuesModule.jsx'
 
 export const MODULES = [
   {
@@ -58,6 +59,16 @@ export const MODULES = [
     status: 'ready',
     component: NanoBioModule,
   },
+  {
+    id: 'tissues',
+    name: 'Tissues — membrane permeability',
+    blurb: 'Predict drug absorption & permeability across gut, brain, skin and more — with the membrane free-energy barrier and a 3D scene.',
+    tags: ['Implicit membrane', 'G(z) barrier', 'Multi-tissue'],
+    icon: 'membrane',
+    accent: 'tissue',
+    status: 'ready',
+    component: TissuesModule,
+  },
 ]
 
 export function findModule(id) {
@@ -75,4 +86,5 @@ export const ACCENTS = {
   net: { color: '#a78bfa', soft: 'rgba(167,139,250,0.15)', text: '#c4b5fd' },
   qsar: { color: '#38bdf8', soft: 'rgba(56,189,248,0.14)', text: '#7dd3fc' },
   nano: { color: '#fb923c', soft: 'rgba(251,146,60,0.14)', text: '#fdba74' },
+  tissue: { color: '#34d399', soft: 'rgba(52,211,153,0.14)', text: '#6ee7b7' },
 }

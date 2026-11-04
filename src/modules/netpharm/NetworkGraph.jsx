@@ -62,9 +62,22 @@ export default function NetworkGraph({ nodes = [], edges = [], accent = '#a78bfa
     cyRef.current.layout(layoutOpts(maxDeg)).run()
   }
   function png(bg) {
-    if (!cyRef.current) return
-    const uri = cyRef.current.png({ full: true, scale: 2.5, bg: bg === 'white' ? '#ffffff' : bg === 'dark' ? '#0b1424' : undefined })
-    saveFile('DDS_ppi_network.png', uri, 'image/png')
+    const cy = cyRef.current
+    if (!cy || !cy.nodes().length) return
+    const background = bg === 'white' ? '#ffffff' : bg === 'dark' ? '#0b1424' : undefined
+    // Export the whole network as a Blob. maxWidth/maxHeight keep a large (hub-dense)
+    // graph under the browser's canvas-size limit, which otherwise makes png() return an
+    // empty image or throw — the cause of the silent "nothing happens" on big networks.
+    const opts = (scale, cap) => ({ output: 'blob', full: true, scale, maxWidth: cap, maxHeight: cap, bg: background })
+    try {
+      let blob = cy.png(opts(2.5, 8000))
+      if (!blob || blob.size < 128) blob = cy.png(opts(1.5, 4000)) // fallback if the hi-res pass came back empty
+      if (!blob || blob.size < 128) throw new Error('empty PNG')
+      saveFile('DDS_ppi_network.png', blob, 'image/png')
+    } catch (e) {
+      console.error('PPI PNG export failed:', e)
+      alert('Could not export the PPI network as PNG — try "Fit" first, then export again.')
+    }
   }
 
   return (

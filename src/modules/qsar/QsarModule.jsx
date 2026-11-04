@@ -255,7 +255,7 @@ export default function QsarModule({ onSwitchModules, onHandoff }) {
           <button onClick={() => setCite(true)} className="flex w-full items-center gap-2 rounded-lg px-2.5 py-1.5 text-left text-slate-300 transition hover:bg-ink-800/70 hover:text-white">
             <QuoteIcon className="h-4 w-4" color={S} /><span className="text-[12px] font-medium">Cite DDS</span>
           </button>
-          <div className="mt-1.5 px-2.5 text-[10px] text-slate-600">DDS v4.1 · QSAR</div>
+          <div className="mt-1.5 px-2.5 text-[10px] text-slate-600">DDS v5.0 · QSAR</div>
         </div>
       </div>
 
@@ -832,7 +832,7 @@ function ReportModal({ dataset, result, task, descriptor, algo, design, onClose 
       <h2>${design ? '6' : '5'}. References</h2>
       <ol style="font-size:11px;line-height:1.6;color:#475569;padding-left:18px;margin-top:6px">
         <li>Mahmoud E. Soliman. Drug Design Studio (DDS): An all-in-one cross-platform for covalent/non-covalent docking, covalent binders virtual screening and protein&ndash;ligand interaction analysis. <i>(Under review).</i></li>
-        <li>Mahmoud E. Soliman. Drug Design Suite (DDS) 2.0: A Unified Platform for Network Pharmacology Integrated with Docking and Virtual Screening Workflow for Covalent/Non-Covalent Binders. <i>(Under review).</i></li>
+        <li>Mahmoud E. Soliman. Drug Design Studio (DDS) 2.0: A Unified Platform for Network Pharmacology Integrated with Docking and Virtual Screening Workflow for Covalent/Non-Covalent Binders. <i>Int. J. Mol. Sci.</i> 2026;27(17):7874. https://doi.org/10.3390/ijms27177874</li>
         <li>Mahmoud E. Soliman. Drug Design Studio (DDS) 3.0: A Streamlined QSAR, 3D-QSAR and Pharmacophore Modelling Platform Coupling Ligand-Based Activity Prediction to Covalent and Non-Covalent Structure-Based Discovery. <i>(Under review).</i></li>
         <li>Landrum G, <i>et al.</i> RDKit: Open-source cheminformatics. https://www.rdkit.org</li>
         <li>Pedregosa F, <i>et al.</i> Scikit-learn: Machine learning in Python. <i>J Mach Learn Res.</i> 2011;12:2825&ndash;2830.</li>

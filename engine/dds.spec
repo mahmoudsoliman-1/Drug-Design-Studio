@@ -46,6 +46,8 @@ hiddenimports += [
     "ddsengine.interactions", "ddsengine.analysis", "ddsengine.minimize",
     "ddsengine.paths", "ddsengine.covalent", "ddsengine.validate",
     "ddsengine.netpharm", "ddsengine.pdbmap", "ddsengine.qsar",
+    "ddsengine.nanobio", "ddsengine.mmgbsa", "ddsengine.mmgbsa_engine",
+    "ddsengine.tissues", "ddsengine.tissues_physics",
 ]
 
 # app resources: built UI + the Vina binary for this OS
@@ -60,6 +62,17 @@ datas += [(f, "ddsengine/qsar_data")
 # Nano carrier library (read at runtime by ddsengine.nanobio)
 datas += [(f, "ddsengine/nano_data/carriers")
           for f in glob.glob(_os.path.join("ddsengine", "nano_data", "carriers", "*.mol"))]
+
+# Tissues permeability models (read at runtime by ddsengine.tissues from
+# dirname(__file__)/tissues_models/model_<tid>.joblib)
+datas += [(f, "ddsengine/tissues_models")
+          for f in glob.glob(_os.path.join("ddsengine", "tissues_models", "*.joblib"))]
+
+# MM-GBSA worker script: run as a subprocess (`python mmgbsa_engine.py ...`) by the
+# fetched conda engine, so the .py must exist on disk in the bundle — PyInstaller
+# otherwise compiles it into the archive and ENGINE_SCRIPT's path would not resolve.
+if _os.path.exists(_os.path.join("ddsengine", "mmgbsa_engine.py")):
+    datas += [(_os.path.join("ddsengine", "mmgbsa_engine.py"), "ddsengine")]
 
 # bundle the AI key (.env is gitignored — key is inside the app, not the public source)
 if _os.path.exists(".env"):
@@ -98,7 +111,7 @@ if sys.platform == "darwin":
         bundle_identifier="za.ac.ukzn.drugdesignstudio",
         info_plist={
             "NSHighResolutionCapable": True,
-            "CFBundleShortVersionString": "4.1.0",
+            "CFBundleShortVersionString": "5.0.0",
             # WKWebView blocks the local http://127.0.0.1 UI without this → blank white window
             "NSAppTransportSecurity": {
                 "NSAllowsArbitraryLoads": True,

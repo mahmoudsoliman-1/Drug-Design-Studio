@@ -67,6 +67,28 @@ export function minimize(payload) {
   })
 }
 
+export function mmgbsaStatus() {
+  return call('/api/mmgbsa/status')
+}
+
+export function mmgbsaInstall() {
+  return call('/api/mmgbsa/install', { method: 'POST', headers: { 'Content-Type': 'application/json' } })
+}
+
+export function mmgbsa(payload) {
+  return call('/api/mmgbsa', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload),
+  })
+}
+
+export function mmgbsaBatch(payload) {
+  return call('/api/mmgbsa/batch', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload),
+  })
+}
+
 export function aiStatus() {
   return call('/api/ai/status')
 }
@@ -218,6 +240,17 @@ export function nanoStructure({ smiles, carrier }) {
 export function nanoIdentify(smiles) {
   return post('/api/nano/identify', { smiles })
 }
+// --------------------------- tissues (membrane permeability) ---------------------------
+export function tissuesCatalog() {
+  return call('/api/tissues/catalog')
+}
+export function tissuesPredict({ smiles, tissues }) {
+  return post('/api/tissues/predict', { smiles, tissues })
+}
+export function tissuesPlace({ smiles, tissue }) {
+  return post('/api/tissues/place', { smiles, tissue })
+}
+
 export function nanoDepict(smiles, legends) {
   // slate base tone: legible on both the dark app UI and a white export background
   return post('/api/qsar/depict', { smiles, legends, pharmacophore: true, per_row: Math.min(smiles.length || 1, 3), base_color: '#64748b' })

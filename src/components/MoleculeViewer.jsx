@@ -9,10 +9,13 @@ import { saveFile } from '../download.js'
 export default function MoleculeViewer({
   style = 'cartoon', showLigand = true, spin = false, showInteractions = false,
   pdb = null, ligResn = 'MK1', empty = false, box = null, showBox = false,
-  covalentTarget = null, overlayLigand = null,
+  covalentTarget = null, overlayLigand = null, hideNativeLigand = false,
 }) {
   const boxKey = box ? `${box.center.x}|${box.center.y}|${box.center.z}|${box.size.x}|${box.size.y}|${box.size.z}` : ''
   const covKey = covalentTarget ? JSON.stringify(covalentTarget) : ''
+  // when an overlay (placed) ligand is shown, the receptor's own co-crystal
+  // ligand would render as a confusing duplicate — suppress it in that case
+  const showNative = showLigand && !hideNativeLigand
   const hostRef = useRef(null)
   const viewerRef = useRef(null)
   const modelRef = useRef(null)
@@ -36,7 +39,7 @@ export default function MoleculeViewer({
       host.style.height = `${h * SCALE}px`
       viewer.resize()
       viewer.removeAllShapes(); viewer.removeAllLabels()
-      applyStyle(viewer, style, showLigand, ligResn)
+      applyStyle(viewer, style, showNative, ligResn)
       if (showInteractions && modelRef.current) drawInteractions(viewer, modelRef.current, SCALE, ligResn)
       if (covalentTarget) drawCovalentTarget(viewer, covalentTarget, SCALE)
       if (bg === 'transparent') viewer.setBackgroundColor(0xffffff, 0)
@@ -49,7 +52,7 @@ export default function MoleculeViewer({
     host.style.height = oh
     viewer.resize()
     viewer.removeAllShapes(); viewer.removeAllLabels()
-    applyStyle(viewer, style, showLigand, ligResn)
+    applyStyle(viewer, style, showNative, ligResn)
     if (showInteractions && modelRef.current) drawInteractions(viewer, modelRef.current, 1, ligResn)
     if (covalentTarget) drawCovalentTarget(viewer, covalentTarget, 1)
     viewer.setBackgroundColor(0x070b14, 1)
@@ -96,7 +99,7 @@ export default function MoleculeViewer({
         viewer.removeAllModels(); viewer.removeAllShapes(); viewer.removeAllLabels(); viewer.removeAllSurfaces()
         overlayModelRef.current = null
         modelRef.current = viewer.addModel(text, 'pdb')
-        applyStyle(viewer, style, showLigand, ligResn)
+        applyStyle(viewer, style, showNative, ligResn)
         if (showInteractions) setCounts(drawInteractions(viewer, modelRef.current, 1, ligResn))
         if (covalentTarget) drawCovalentTarget(viewer, covalentTarget, 1)
         viewer.zoomTo()          // fit & centre the whole structure
@@ -118,14 +121,14 @@ export default function MoleculeViewer({
     const viewer = viewerRef.current
     if (!viewer || status !== 'ready') return
     viewer.removeAllShapes(); viewer.removeAllLabels()
-    applyStyle(viewer, style, showLigand, ligResn)
+    applyStyle(viewer, style, showNative, ligResn)
     if (showInteractions && modelRef.current) setCounts(drawInteractions(viewer, modelRef.current, 1, ligResn))
     else setCounts({ hb: 0, hydro: 0 })
     if (covalentTarget) drawCovalentTarget(viewer, covalentTarget, 1)
     if (overlayModelRef.current) styleOverlay(overlayModelRef.current)
     if (showBox && box) drawBox(viewer, box)
     viewer.render()
-  }, [style, showLigand, showInteractions, status, ligResn, showBox, boxKey, covKey])
+  }, [style, showLigand, hideNativeLigand, showInteractions, status, ligResn, showBox, boxKey, covKey])
 
   // overlay ligand (a separately-loaded compound placed at the box centre before
   // docking) — its own model, re-placed whenever the ligand or box centre changes
@@ -247,7 +250,7 @@ export default function MoleculeViewer({
   )
 }
 
-function applyStyle(viewer, style, showLigand, ligResn) {
+function applyStyle(viewer, style, showNative, ligResn) {
   viewer.removeAllSurfaces() // surfaces persist independently of setStyle — clear before restyling
   viewer.setStyle({}, {})
   const protein = { hetflag: false }
@@ -255,7 +258,7 @@ function applyStyle(viewer, style, showLigand, ligResn) {
   else if (style === 'surface') viewer.setStyle(protein, { cartoon: { color: '#1c2842' } })
   else if (style === 'stick') viewer.setStyle(protein, { stick: { radius: 0.12, colorscheme: 'cyanCarbon' } })
 
-  if (showLigand) {
+  if (showNative) {
     viewer.setStyle({ resn: ligResn }, {
       stick: { radius: 0.22, colorscheme: 'magentaCarbon' },
       sphere: { scale: 0.28, colorscheme: 'magentaCarbon' },

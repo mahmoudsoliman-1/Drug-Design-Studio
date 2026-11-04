@@ -45,7 +45,7 @@ export default function ModuleHub({ modules, onOpen, runningCount = 0 }) {
           {modules.map((m) => <ModuleCard key={m.id} m={m} onOpen={onOpen} />)}
         </div>
 
-        <div className="mt-auto pt-6 text-right text-[10px] text-slate-600">DDS v4.1</div>
+        <div className="mt-auto pt-6 text-right text-[10px] text-slate-600">DDS v5.0</div>
       </div>
     </div>
   )
@@ -117,5 +117,6 @@ function ArrowIcon(p) { return I(p, <path d="M5 12h14M13 6l6 6-6 6" />) }
 function LockIcon(p) { return I(p, <><rect x="5" y="11" width="14" height="9" rx="2" /><path d="M8 11V8a4 4 0 018 0v3" /></>) }
 function OfflineIcon(p) { return I(p, <><path d="M12 20h.01M2 8.5a15 15 0 0120 0M5 12a10 10 0 0114 0M8.5 15.5a5 5 0 017 0" /><path d="M3 3l18 18" /></>) }
 function SpinIcon(p) { return I(p, <><path d="M12 3a9 9 0 109 9" /></>) }
+function MembraneIcon(p) { return I(p, <><circle cx="5" cy="8" r="1.4" /><circle cx="10" cy="8" r="1.4" /><circle cx="15" cy="8" r="1.4" /><circle cx="19" cy="8" r="1.4" /><path d="M5 9.4v4M10 9.4v4M15 9.4v4M19 9.4v4" /><circle cx="5" cy="16" r="1.4" /><circle cx="10" cy="16" r="1.4" /><circle cx="15" cy="16" r="1.4" /><circle cx="19" cy="16" r="1.4" /><path d="M5 14.6v-1M10 14.6v-1M15 14.6v-1M19 14.6v-1" /></>) }
 
-const ICONS = { target: TargetIcon, network: NetworkIcon, chart: ChartIcon, flask: FlaskIcon }
+const ICONS = { target: TargetIcon, network: NetworkIcon, chart: ChartIcon, flask: FlaskIcon, membrane: MembraneIcon }

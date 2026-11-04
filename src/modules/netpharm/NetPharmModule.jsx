@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo } from 'react'
+import { useState, useEffect, useMemo, useRef } from 'react'
 import * as api from '../../api.js'
 import Logo from '../../components/Logo.jsx'
 import DocsModal, { CiteModal } from '../../components/Documentation.jsx'
@@ -63,6 +63,10 @@ export default function NetPharmModule({ onSwitchModules, onHandoff }) {
   const [cUpload, setCUpload] = useState('')
   const [cLoading, setCLoading] = useState(false)
   const [cResult, setCResult] = useState(null)
+  // track the last pasted-target text already loaded, so auto-load (on blur) and the
+  // "Load pasted targets" button never re-fire for an unchanged list.
+  const cUploadRef = useRef('')
+  const dUploadRef = useRef('')
 
   // ranking / covalent selection filters
   const [dMinScore, setDMinScore] = useState(0)
@@ -127,6 +131,7 @@ export default function NetPharmModule({ onSwitchModules, onHandoff }) {
   const sharedCov = useMemo(() => (shared ? shared.filter((g) => covSet.has(g)).length : 0), [shared, covSet])
 
   async function loadDisease() {
+    dUploadRef.current = dUpload
     setError(''); setDLoading(true)
     try {
       const sources = Object.keys(dSources).filter((k) => dSources[k])
@@ -141,6 +146,7 @@ export default function NetPharmModule({ onSwitchModules, onHandoff }) {
     } catch (e) { setError(engErr(e)) } finally { setDLoading(false) }
   }
   async function loadCompound() {
+    cUploadRef.current = cUpload
     setError(''); setCLoading(true)
     try {
       const sources = Object.keys(cSources).filter((k) => cSources[k])
@@ -154,6 +160,11 @@ export default function NetPharmModule({ onSwitchModules, onHandoff }) {
       setCResult(r)
     } catch (e) { setError(engErr(e)) } finally { setCLoading(false) }
   }
+  // Auto-load pasted/uploaded gene lists: fired when the textarea loses focus and by the
+  // "Load pasted targets" button. Guarded against re-firing an unchanged list.
+  function commitDUpload() { if (dUpload.trim() && dUpload !== dUploadRef.current) loadDisease() }
+  function commitCUpload() { if (cUpload.trim() && cUpload !== cUploadRef.current) loadCompound() }
+
   function loadCaseStudy() {
     // Benchmark reproduction of Deng et al. 2022 (curcumin × TNBC). The study's own
     // target sets are supplied via the upload fields and the external databases are
@@ -168,6 +179,7 @@ export default function NetPharmModule({ onSwitchModules, onHandoff }) {
   }
   // wipe the whole workspace back to a clean slate for a fresh analysis
   function newRun() {
+    cUploadRef.current = ''; dUploadRef.current = ''
     setStep('disease'); setError(''); setExportOpen(false)
     setDisease(''); setMultiDiseaseMode(false); setDiseasesText(''); setDUpload(''); setDResult(null); setDLoading(false)
     setDSources({ opentargets: true, ctd: false })
@@ -256,7 +268,7 @@ export default function NetPharmModule({ onSwitchModules, onHandoff }) {
             <QuoteIcon className="h-4 w-4 text-violet" />
             <span className="text-[12px] font-medium">Cite DDS</span>
           </button>
-          <div className="mt-1.5 px-2.5 text-[10px] text-slate-600">DDS v4.1</div>
+          <div className="mt-1.5 px-2.5 text-[10px] text-slate-600">DDS v5.0</div>
         </div>
       </div>
 
@@ -329,14 +341,14 @@ export default function NetPharmModule({ onSwitchModules, onHandoff }) {
               step={step}
               disease={disease} setDisease={setDisease} dSources={dSources} setDSources={setDSources}
               multiDiseaseMode={multiDiseaseMode} setMultiDiseaseMode={setMultiDiseaseMode} diseasesText={diseasesText} setDiseasesText={setDiseasesText}
-              dUpload={dUpload} setDUpload={setDUpload} dLoading={dLoading} dResult={dResult} loadDisease={loadDisease}
+              dUpload={dUpload} setDUpload={setDUpload} dLoading={dLoading} dResult={dResult} loadDisease={loadDisease} commitDUpload={commitDUpload}
               dMinScore={dMinScore} setDMinScore={setDMinScore} dCovOnly={dCovOnly} setDCovOnly={setDCovOnly}
               dMutOnly={dMutOnly} setDMutOnly={setDMutOnly} dCount={dEffective.length}
               compound={compound} setCompound={setCompound} isSmiles={isSmiles} setIsSmiles={setIsSmiles}
               multiMode={multiMode} setMultiMode={setMultiMode} compoundsText={compoundsText} setCompoundsText={setCompoundsText}
               cSources={cSources} setCSources={setCSources} cUpload={cUpload} setCUpload={setCUpload}
               cMinScore={cMinScore} setCMinScore={setCMinScore} cCovOnly={cCovOnly} setCCovOnly={setCCovOnly} cCount={cEffective.length}
-              cLoading={cLoading} cResult={cResult} loadCompound={loadCompound}
+              cLoading={cLoading} cResult={cResult} loadCompound={loadCompound} commitCUpload={commitCUpload}
               shared={shared} sharedCov={sharedCov} confidence={confidence} setConfidence={setConfidence}
               centrality={centrality} setCentrality={setCentrality} topn={topn} setTopn={setTopn}
               libs={libs} setLibs={setLibs} result={result} onRun={runAnalysis} running={running}
@@ -545,7 +557,7 @@ function Panel({ icon, title, children }) {
   )
 }
 
-function DiseasePanel({ disease, setDisease, dSources, setDSources, multiDiseaseMode, setMultiDiseaseMode, diseasesText, setDiseasesText, dUpload, setDUpload, dLoading, dResult, loadDisease, dMinScore, setDMinScore, dCovOnly, setDCovOnly, dMutOnly, setDMutOnly, dCount, onCaseStudy }) {
+function DiseasePanel({ disease, setDisease, dSources, setDSources, multiDiseaseMode, setMultiDiseaseMode, diseasesText, setDiseasesText, dUpload, setDUpload, dLoading, dResult, loadDisease, commitDUpload, dMinScore, setDMinScore, dCovOnly, setDCovOnly, dMutOnly, setDMutOnly, dCount, onCaseStudy }) {
   return (
     <Panel icon={<VirusIcon className="h-4 w-4 text-violet" />} title="Disease targets">
       <button onClick={onCaseStudy}
@@ -599,9 +611,15 @@ function DiseasePanel({ disease, setDisease, dSources, setDSources, multiDisease
       </div>
 
       <label className="mt-3 block text-[11px] text-slate-400">Paste / upload genes (GeneCards, OMIM, DisGeNET, TTD…)</label>
-      <textarea value={dUpload} onChange={(e) => setDUpload(e.target.value)} rows={2}
+      <textarea value={dUpload} onChange={(e) => setDUpload(e.target.value)} onBlur={commitDUpload} rows={2}
         placeholder="APP, PSEN1, MAPT …"
         className="mt-1 w-full resize-none rounded-lg border border-ink-600 bg-ink-950/60 px-3 py-2 text-[12px] text-white placeholder-slate-600 outline-none focus:border-violet" />
+      {dUpload.trim() && (
+        <button onClick={commitDUpload} disabled={dLoading}
+          className="mt-1.5 w-full rounded-lg border border-violet/60 bg-violet/15 px-3 py-1.5 text-[11px] font-semibold text-violet hover:bg-violet/25 disabled:opacity-60">
+          {dLoading ? 'Loading…' : 'Load pasted genes →'}
+        </button>
+      )}
 
       {dResult && (
         <>
@@ -626,7 +644,7 @@ function DiseasePanel({ disease, setDisease, dSources, setDSources, multiDisease
   )
 }
 
-function CompoundPanel({ compound, setCompound, isSmiles, setIsSmiles, multiMode, setMultiMode, compoundsText, setCompoundsText, cSources, setCSources, cUpload, setCUpload, cMinScore, setCMinScore, cCovOnly, setCCovOnly, cCount, cLoading, cResult, loadCompound, onRun, running }) {
+function CompoundPanel({ compound, setCompound, isSmiles, setIsSmiles, multiMode, setMultiMode, compoundsText, setCompoundsText, cSources, setCSources, cUpload, setCUpload, commitCUpload, cMinScore, setCMinScore, cCovOnly, setCCovOnly, cCount, cLoading, cResult, loadCompound, onRun, running }) {
   return (
     <Panel icon={<FlaskIcon className="h-4 w-4 text-violet" />} title="Compound targets">
       <div className="mb-2 grid grid-cols-2 gap-1 rounded-lg bg-ink-800/70 p-1">
@@ -677,9 +695,15 @@ function CompoundPanel({ compound, setCompound, isSmiles, setIsSmiles, multiMode
       </div>
 
       <label className="mt-3 block text-[11px] text-slate-400">Paste / upload targets (SwissTargetPrediction, TCMSP…)</label>
-      <textarea value={cUpload} onChange={(e) => setCUpload(e.target.value)} rows={2}
+      <textarea value={cUpload} onChange={(e) => setCUpload(e.target.value)} onBlur={commitCUpload} rows={2}
         placeholder="HDAC1, PTGS2, AKT1 …"
         className="mt-1 w-full resize-none rounded-lg border border-ink-600 bg-ink-950/60 px-3 py-2 text-[12px] text-white placeholder-slate-600 outline-none focus:border-violet" />
+      {cUpload.trim() && (
+        <button onClick={commitCUpload} disabled={cLoading}
+          className="mt-1.5 w-full rounded-lg border border-violet/60 bg-violet/15 px-3 py-1.5 text-[11px] font-semibold text-violet hover:bg-violet/25 disabled:opacity-60">
+          {cLoading ? 'Loading…' : 'Load pasted targets →'}
+        </button>
+      )}
 
       {cResult && (
         <div className="mt-4 border-t border-ink-700/60 pt-3">

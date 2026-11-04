@@ -592,7 +592,7 @@ function methodsHTML(meta) {
 
   const R = [
     'Mahmoud E. Soliman. Drug Design Studio (DDS): An all-in-one cross-platform for covalent/non-covalent docking, covalent binders virtual screening and protein&ndash;ligand interaction analysis. <i>(Under review).</i>',
-    'Mahmoud E. Soliman. Drug Design Suite (DDS) 2.0: A Unified Platform for Network Pharmacology Integrated with Docking and Virtual Screening Workflow for Covalent/Non-Covalent Binders. <i>(Under review).</i>',
+    'Mahmoud E. Soliman. Drug Design Studio (DDS) 2.0: A Unified Platform for Network Pharmacology Integrated with Docking and Virtual Screening Workflow for Covalent/Non-Covalent Binders. <i>Int. J. Mol. Sci.</i> 2026;27(17):7874. https://doi.org/10.3390/ijms27177874',
     'Mahmoud E. Soliman. Drug Design Studio (DDS) 3.0: A Streamlined QSAR, 3D-QSAR and Pharmacophore Modelling Platform Coupling Ligand-Based Activity Prediction to Covalent and Non-Covalent Structure-Based Discovery. <i>(Under review).</i>',
     'Berman HM, Westbrook J, Feng Z, <i>et al.</i> The Protein Data Bank. <i>Nucleic Acids Res.</i> 2000;28:235&ndash;242.',
     "O'Boyle NM, Banck M, James CA, <i>et al.</i> Open Babel: An open chemical toolbox. <i>J Cheminform.</i> 2011;3:33.",
@@ -641,7 +641,24 @@ function methodsHTML(meta) {
   const inter = para(
     `Interactions between the top-ranked pose and the receptor were identified geometrically from the three-dimensional coordinates: hydrogen bonds were assigned for polar donor&ndash;acceptor (N/O&middot;&middot;&middot;N/O) distances of 2.4&ndash;3.5&nbsp;&Aring;, salt bridges for oppositely charged groups within 4.0&nbsp;&Aring;, and hydrophobic contacts for carbon&ndash;carbon distances &le;&nbsp;4.0&nbsp;&Aring;.`)
 
-  const refs = `<h2>References</h2><ol style="font-size:11px;line-height:1.6;color:#475569;padding-left:18px;margin-top:6px">${R.concat(covRefs).map((r) => `<li style="margin:3px 0">${r}</li>`).join('')}</ol>`
+  // ssMM/GBSA methodology + references (only when a binding-energy estimate was computed)
+  const mm = meta.mmgbsa
+  const mmRefs = []
+  let ffN, gbN, mmgbN
+  if (mm) {
+    mmRefs.push('Maier JA, Martinez C, Kasavajhala K, <i>et al.</i> ff14SB: improving the accuracy of protein side chain and backbone parameters from ff99SB. <i>J Chem Theory Comput.</i> 2015;11:3696&ndash;3713.'); ffN = baseN + covRefs.length + mmRefs.length
+    mmRefs.push('Nguyen H, Roe DR, Simmerling C. Improved generalized Born solvent model parameters for protein simulations. <i>J Chem Theory Comput.</i> 2013;9:2020&ndash;2034.'); gbN = baseN + covRefs.length + mmRefs.length
+    mmRefs.push('Genheden S, Ryde U. The MM/PBSA and MM/GBSA methods to estimate ligand-binding affinities. <i>Expert Opin Drug Discov.</i> 2015;10:449&ndash;461.'); mmgbN = baseN + covRefs.length + mmRefs.length
+  }
+  const mmCharges = (mm && mm.charges === 'am1bcc') ? 'AM1-BCC' : 'MMFF94<sup>7</sup>'
+  const mmEntropy = (mm && mm.entropy_penalty) ? ` An empirical configurational-entropy penalty proportional to the ligand's number of rotatable bonds (N<sub>rot</sub>&nbsp;=&nbsp;${mm.n_rot}) was then added to &Delta;G<sub>bind</sub> to approximate the entropic cost of binding.` : ''
+  const mmHead = (mm && mm.batch)
+    ? `The top ${mm.n || 'ranked'} docking hits were additionally rescored with a single-structure MM-GBSA scheme<sup>${mmgbN}</sup>. Each docked complex was energy-minimised`
+    : `For the reported complex, the binding free energy was additionally estimated using a single-structure MM-GBSA scheme<sup>${mmgbN}</sup>. The docked complex was energy-minimised`
+  const mmgbsa = mm ? para(
+    `${mmHead} in implicit solvent (GBn2 generalized-Born model<sup>${gbN}</sup>) using the Amber ff14SB force field<sup>${ffN}</sup> for the protein and GAFF2 with ${mmCharges} partial charges for the ligand. The binding free energy was computed on the single minimised structure as &Delta;G<sub>bind</sub>&nbsp;=&nbsp;E(complex)&nbsp;&minus;&nbsp;E(receptor)&nbsp;&minus;&nbsp;E(ligand), where each energy is the sum of the molecular-mechanics (van der Waals and electrostatic) and generalized-Born solvation terms.${mmEntropy} No molecular-dynamics sampling was performed; the estimate is intended for relative ranking rather than absolute affinity.`) : ''
+
+  const refs = `<h2>References</h2><ol style="font-size:11px;line-height:1.6;color:#475569;padding-left:18px;margin-top:6px">${R.concat(covRefs).concat(mmRefs).map((r) => `<li style="margin:3px 0">${r}</li>`).join('')}</ol>`
 
   const disclaimer = `<p style="font-size:10.5px;color:#94a3b8;font-style:italic;margin-top:16px;border-top:1px dashed #e2e8f0;padding-top:8px">
     * This computational methods section is provided as a <b>guidance template only</b>. Please rewrite and adapt it in your own
@@ -649,7 +666,7 @@ function methodsHTML(meta) {
 
   // interpretation of covalent results sits within the methods block, before the references (references always last)
   const interpretation = p.covalent ? covalentInterpretationHTML(p, screening) : ''
-  return `<h2>Computational methods&nbsp;<span style="color:#0f766e">*</span></h2>${intro}${ligand}${dock}${covalent}${screen}${inter}${disclaimer}${interpretation}${refs}`
+  return `<h2>Computational methods&nbsp;<span style="color:#0f766e">*</span></h2>${intro}${ligand}${dock}${covalent}${screen}${mmgbsa}${inter}${disclaimer}${interpretation}${refs}`
 }
 
 // Reader-facing guidance on how to interpret covalent results (mode-aware).
@@ -720,11 +737,13 @@ function buildReportHTML(meta, sections) {
     ${bar ? `<h2>Binding affinity by pose</h2>${bar}` : ''}` : ''
 
   const hasXray = poses.some((p) => p.rmsd_xray != null)
+  // single-docking MM-GBSA ΔG (computed for the reported pose only)
+  const mmS = meta.mmgbsa && !meta.mmgbsa.batch ? meta.mmgbsa : null
   const posesTbl = sections.poses && poses.length ? `
     <h2>Ranked poses</h2>
-    <table><thead><tr><th>Pose</th><th>Affinity (kcal/mol)</th><th>RMSD l.b.</th><th>RMSD u.b.</th>${hasXray ? '<th>RMSD to X-ray (&Aring;)</th>' : ''}</tr></thead><tbody>
-    ${poses.map((p) => `<tr><td>${p.pose}</td><td class="${p.pose === 1 ? 'best' : ''}">${p.affinity}</td><td>${p.rmsd_lb ?? '—'}</td><td>${p.rmsd_ub ?? '—'}</td>${hasXray ? `<td>${p.rmsd_xray ?? '—'}</td>` : ''}</tr>`).join('')}
-    </tbody></table>${hasXray ? '<p style="font-size:11px;color:#64748b;margin-top:4px">RMSD to X-ray: heavy-atom deviation of each pose from the co-crystallised ligand (cognate re-docking validation); RMSD l.b./u.b. are Vina&rsquo;s inter-mode bounds.</p>' : ''}` : ''
+    <table><thead><tr><th>Pose</th><th>Affinity (kcal/mol)</th>${mmS ? '<th>&Delta;G MM-GBSA (kcal/mol)</th>' : ''}<th>RMSD l.b.</th><th>RMSD u.b.</th>${hasXray ? '<th>RMSD to X-ray (&Aring;)</th>' : ''}</tr></thead><tbody>
+    ${poses.map((p) => `<tr><td>${p.pose}</td><td class="${p.pose === 1 ? 'best' : ''}">${p.affinity}</td>${mmS ? `<td class="best">${String(p.pose) === String(meta.pose) ? mmS.dG_bind : '—'}</td>` : ''}<td>${p.rmsd_lb ?? '—'}</td><td>${p.rmsd_ub ?? '—'}</td>${hasXray ? `<td>${p.rmsd_xray ?? '—'}</td>` : ''}</tr>`).join('')}
+    </tbody></table>${mmS ? '<p style="font-size:11px;color:#64748b;margin-top:4px">&Delta;G MM-GBSA: single-structure MM-GBSA binding free energy for the reported pose (see Methods).</p>' : ''}${hasXray ? '<p style="font-size:11px;color:#64748b;margin-top:4px">RMSD to X-ray: heavy-atom deviation of each pose from the co-crystallised ligand (cognate re-docking validation); RMSD l.b./u.b. are Vina&rsquo;s inter-mode bounds.</p>' : ''}` : ''
 
   const interTbl = sections.interactions && inter.length ? `
     <h2>Key interactions</h2>
@@ -732,11 +751,12 @@ function buildReportHTML(meta, sections) {
     ${inter.map((it) => `<tr><td>${it.residue}</td><td>${it.type}</td><td>${it.distance}</td></tr>`).join('')}
     </tbody></table>` : ''
 
+  const hasMM = rows.some((c) => c.mmgbsa_dG != null)
   const screenTbl = sections.screening && rows.length ? `
     <h2>Virtual screening leaderboard</h2>
-    <table><thead><tr><th>Rank</th><th>Compound</th><th>Affinity</th><th>MW</th><th>logP</th><th>QED</th></tr></thead><tbody>
-    ${rows.map((c, i) => `<tr><td>${i + 1}</td><td>${c.name}</td><td class="${i === 0 ? 'best' : ''}">${c.affinity}</td><td>${c.mw ?? '—'}</td><td>${c.logp ?? '—'}</td><td>${c.qed ?? '—'}</td></tr>`).join('')}
-    </tbody></table>` : ''
+    <table><thead><tr><th>Rank</th><th>Compound</th><th>Affinity</th>${hasMM ? '<th>&Delta;G MM-GBSA</th>' : ''}<th>MW</th><th>logP</th><th>QED</th></tr></thead><tbody>
+    ${rows.map((c, i) => `<tr><td>${i + 1}</td><td>${c.name}</td><td class="${i === 0 ? 'best' : ''}">${c.affinity}</td>${hasMM ? `<td>${c.mmgbsa_dG ?? '—'}</td>` : ''}<td>${c.mw ?? '—'}</td><td>${c.logp ?? '—'}</td><td>${c.qed ?? '—'}</td></tr>`).join('')}
+    </tbody></table>${hasMM ? '<p style="font-size:11px;color:#64748b;margin-top:4px">&Delta;G MM-GBSA: single-structure MM-GBSA binding free energy for the rescored top hits (kcal/mol; see Methods). &ldquo;—&rdquo; = not rescored.</p>' : ''}` : ''
 
   const methods = sections.methods ? methodsHTML(meta) : ''
   return `<!doctype html><html><head><meta charset="utf-8"><title>${meta.target} — DDS Report</title>${style}</head>
