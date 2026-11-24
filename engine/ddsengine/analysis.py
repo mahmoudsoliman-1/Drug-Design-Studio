@@ -7,6 +7,7 @@ from rdkit.Chem import AllChem
 from meeko import PDBQTMolecule, RDKitMolCreate
 
 from .interactions import _atoms as parse_pdbqt_atoms
+from .interactions import _receptor_atoms
 
 ACIDIC = {"ASP", "GLU"}
 BASIC = {"ARG", "LYS", "HIS"}
@@ -62,10 +63,15 @@ def _d(a, b):
     return math.sqrt((a["x"] - b["x"]) ** 2 + (a["y"] - b["y"]) ** 2 + (a["z"] - b["z"]) ** 2)
 
 
-def _detect(lig, R, max_items=14):
-    found, seen = [], set()
+def _detect(lig, R, max_items=16):
+    found = []
+    polar_res = set()   # residues already in a polar contact (hydrophobic skips them)
 
-    for a in lig:  # H-bonds
+    # H-bonds, counted PER BOND: one per protein polar atom (its nearest ligand
+    # partner), 2.4-3.5 A. A residue making several H-bonds shows several — this
+    # matches the 3D viewer and the side-panel list.
+    hb_cand = []
+    for a in lig:
         if a["el"] not in ("N", "O"):
             continue
         for b in R:
@@ -73,14 +79,20 @@ def _detect(lig, R, max_items=14):
                 continue
             d = _d({"x": a["x"], "y": a["y"], "z": a["z"]}, b)
             if 2.4 <= d <= 3.5:
-                key = (b["resn"], b["resi"], "H-bond")
-                if key in seen:
-                    continue
-                seen.add(key)
-                found.append({"residue": b["resn"] + b["resi"], "chain": b["chain"],
-                              "type": "H-bond", "distance": round(d, 1), "lig_atom": a["i"]})
+                hb_cand.append((d, a, b))
+    hb_cand.sort(key=lambda t: t[0])
+    seen_prot = set()
+    for d, a, b in hb_cand:
+        pk = (round(b["x"], 2), round(b["y"], 2), round(b["z"], 2))   # per protein atom
+        if pk in seen_prot:
+            continue
+        seen_prot.add(pk)
+        polar_res.add((b["resn"], b["resi"]))
+        found.append({"residue": b["resn"] + b["resi"], "chain": b["chain"],
+                      "type": "H-bond", "distance": round(d, 1), "lig_atom": a["i"]})
 
-    for a in lig:  # salt bridges
+    seen_sb = set()
+    for a in lig:  # salt bridges (one per residue)
         for b in R:
             d = _d({"x": a["x"], "y": a["y"], "z": a["z"]}, b)
             if d > 4.0:
@@ -88,16 +100,18 @@ def _detect(lig, R, max_items=14):
             sb = (a["el"] == "O" and b["resn"] in BASIC and b["elem"] == "N") or \
                  (a["el"] == "N" and b["resn"] in ACIDIC and b["elem"] == "O")
             if sb:
-                key = (b["resn"], b["resi"], "Salt bridge")
-                if key in seen:
+                key = (b["resn"], b["resi"])
+                if key in seen_sb:
                     continue
-                seen.add(key)
+                seen_sb.add(key)
+                polar_res.add(key)
                 found.append({"residue": b["resn"] + b["resi"], "chain": b["chain"],
                               "type": "Salt bridge", "distance": round(d, 1), "lig_atom": a["i"]})
 
-    polar_res = {(r, i) for (r, i, t) in seen}
     best = {}
-    for a in lig:  # hydrophobic
+    for a in lig:  # hydrophobic — one contact per residue, merged across chains by
+                   # name (same rule as salt bridges, the 2D map and the 3D badge),
+                   # so a homodimer like 1HSG doesn't list ALA28/ILE50 twice.
         if a["el"] != "C":
             continue
         for b in R:
@@ -105,10 +119,10 @@ def _detect(lig, R, max_items=14):
                 continue
             d = _d({"x": a["x"], "y": a["y"], "z": a["z"]}, b)
             if d <= 4.0:
-                k = (b["resn"], b["resi"], b["chain"])
+                k = (b["resn"], b["resi"])
                 if k not in best or d < best[k][0]:
-                    best[k] = (d, a["i"])
-    for (resn, resi, chain), (d, ai) in sorted(best.items(), key=lambda kv: kv[1][0]):
+                    best[k] = (d, a["i"], b["chain"])
+    for (resn, resi), (d, ai, chain) in sorted(best.items(), key=lambda kv: kv[1][0]):
         if (resn, resi) in polar_res:
             continue
         found.append({"residue": resn + resi, "chain": chain, "type": "Hydrophobic",
@@ -119,14 +133,17 @@ def _detect(lig, R, max_items=14):
     return found[:max_items]
 
 
-def analyze(receptor_pdbqt, pose_pdbqt):
-    """Returns (ligand_2d, interactions) with exact ligand-atom indices."""
+def analyze(receptor_pdb, pose_pdbqt):
+    """Returns (ligand_2d, interactions) with exact ligand-atom indices. The receptor
+    is the ORIGINAL protein PDB (author numbering, protein ATOM records only), so the
+    2D residue labels match the 3D complex viewer — not the Open Babel PDBQT, which
+    renumbers residues from 1."""
     mol = Chem.RemoveHs(pose_to_rdkit(pose_pdbqt))
     conf = mol.GetConformer()
     lig = []
     for a in mol.GetAtoms():
         p = conf.GetAtomPosition(a.GetIdx())
         lig.append({"i": a.GetIdx(), "el": a.GetSymbol(), "x": p.x, "y": p.y, "z": p.z})
-    R = [a for a in parse_pdbqt_atoms(receptor_pdbqt) if a["elem"] != "H"]
+    R = _receptor_atoms(receptor_pdb)
     inter = _detect(lig, R)
     return _depiction(mol), inter

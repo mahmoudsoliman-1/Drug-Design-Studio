@@ -7,7 +7,7 @@ import Logo from './Logo.jsx'
 /*  with overview, install, protocols/methods, quick start, references. */
 /* ------------------------------------------------------------------ */
 
-export const DOC_VERSION = 'v5.0'
+export const DOC_VERSION = 'v5.1'
 
 export const CITATION = 'Mahmoud E. Soliman. Drug Design Studio (DDS): An all-in-one cross-platform for covalent/non-covalent docking, covalent binders virtual screening and protein–ligand interaction analysis. (Under review).'
 export const CITATION2 = 'Mahmoud E. Soliman. Drug Design Studio (DDS) 2.0: A Unified Platform for Network Pharmacology Integrated with Docking and Virtual Screening Workflow for Covalent/Non-Covalent Binders, Int. J. Mol. Sci. 2026, 27(17), 7874. https://doi.org/10.3390/ijms27177874'

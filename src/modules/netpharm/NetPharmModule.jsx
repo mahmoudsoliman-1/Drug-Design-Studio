@@ -83,8 +83,23 @@ export default function NetPharmModule({ onSwitchModules, onHandoff }) {
   const [activeJobId, setActiveJobId] = useState(null)
   const [running, setRunning] = useState(false)
   const [result, setResult] = useState(null)
+  const [jobs, setJobs] = useState([])
+  const [jobsOpen, setJobsOpen] = useState(false)
 
   useEffect(() => { api.health().then(() => setEngine('online')).catch(() => setEngine('offline')) }, [])
+
+  // list THIS module's saved runs (netpharm jobs only) so they can be reopened —
+  // every network-pharmacology run is persisted by the engine under kind "netpharm".
+  useEffect(() => {
+    if (engine !== 'online') return
+    let stop = false
+    async function tick() {
+      try { const { jobs: list } = await api.listJobs(); if (!stop) setJobs(list.filter((j) => j.kind === 'netpharm')) } catch { /* keep polling */ }
+    }
+    tick()
+    const t = setInterval(tick, 3000)
+    return () => { stop = true; clearInterval(t) }
+  }, [engine])
 
   useEffect(() => {
     if (!activeJobId) return
@@ -190,6 +205,28 @@ export default function NetPharmModule({ onSwitchModules, onHandoff }) {
     setActiveJobId(null); setRunning(false); setResult(null)
   }
 
+  // reopen a saved network-pharmacology run: restore the computed result (drives the
+  // Network / Hubs / Enrichment views) plus a minimal disease/compound context from
+  // the stored request so the header, tables and Venn aren't blank.
+  async function openSavedJob(j) {
+    try {
+      const full = await api.getJob(j.job_id)
+      if (full.status !== 'done' || !full.result) { setError('That run has no saved result.'); return }
+      const req = full.request || {}
+      const parts = String(full.label || '').split(' × ')
+      const dg = req.disease_genes || []
+      const cg = req.compound_genes || []
+      setDResult({ genes: dg.map((g) => ({ gene: g, score: null })), count: dg.length, label: (parts[1] || 'disease').trim() })
+      setCResult({ genes: cg.map((g) => ({ gene: g, score: null })), count: cg.length, name: (parts[0] || '').trim() })
+      setResult(full.result)
+      setStep('network'); setError(''); setJobsOpen(false)
+    } catch { setError('Could not load that saved run.') }
+  }
+  async function removeSavedJob(id) {
+    await api.deleteJob(id).catch(() => {})
+    setJobs((js) => js.filter((j) => j.job_id !== id))
+  }
+
   async function runAnalysis() {
     setError('')
     if (engine !== 'online') { setError('Engine offline — start the DDS engine.'); return }
@@ -268,7 +305,7 @@ export default function NetPharmModule({ onSwitchModules, onHandoff }) {
             <QuoteIcon className="h-4 w-4 text-violet" />
             <span className="text-[12px] font-medium">Cite DDS</span>
           </button>
-          <div className="mt-1.5 px-2.5 text-[10px] text-slate-600">DDS v5.0</div>
+          <div className="mt-1.5 px-2.5 text-[10px] text-slate-600">DDS v5.1</div>
         </div>
       </div>
 
@@ -290,6 +327,10 @@ export default function NetPharmModule({ onSwitchModules, onHandoff }) {
             </div>
           </div>
           <div className="flex items-center gap-2.5">
+            <button onClick={() => setJobsOpen(true)} title="Saved network-pharmacology runs"
+              className="inline-flex items-center gap-2 rounded-xl bg-ink-800/70 px-3 py-2 text-[12px] font-medium text-slate-300 ring-1 ring-ink-600 transition hover:bg-ink-700 hover:text-white">
+              <JobsIcon className="h-4 w-4" /> Jobs{jobs.length ? ` · ${jobs.length}` : ''}
+            </button>
             <button onClick={newRun} title="Clear the workspace and start a fresh analysis"
               className="inline-flex items-center gap-2 rounded-xl bg-ink-800/70 px-3 py-2 text-[12px] font-medium text-slate-300 ring-1 ring-ink-600 transition hover:bg-ink-700 hover:text-white">
               <NewRunIcon className="h-4 w-4" /> New run
@@ -359,6 +400,7 @@ export default function NetPharmModule({ onSwitchModules, onHandoff }) {
 
       {docs && <DocsModal onClose={() => setDocs(false)} initialModule="netpharm" />}
       {cite && <CiteModal onClose={() => setCite(false)} />}
+      {jobsOpen && <NetpharmJobsPanel jobs={jobs} onClose={() => setJobsOpen(false)} onOpen={openSavedJob} onDelete={removeSavedJob} />}
       {exportOpen && <NetpharmExport compoundLabel={compoundName} diseaseLabel={dResult?.label}
         dResult={dResult} cResult={cResult} shared={shared} result={result}
         params={{ confidence, centrality, topn, libs }} multiCompound={multiMode} multiDisease={multiDiseaseMode}
@@ -883,3 +925,43 @@ function QuoteIcon(p) { return I(p, <><path d="M7 7H4a1 1 0 00-1 1v4a1 1 0 001 1
 function GlobeIcon(p) { return I(p, <><circle cx="12" cy="12" r="9" /><path d="M3 12h18M12 3a15 15 0 010 18M12 3a15 15 0 000 18" /></>) }
 function CheckIcon(p) { return I(p, <path d="M4 12l5 5L20 6" />) }
 function CloseIcon(p) { return I(p, <path d="M6 6l12 12M18 6L6 18" />) }
+function JobsIcon(p) { return I(p, <><circle cx="12" cy="12" r="9" /><path d="M12 7v5l3 2" /></>) }
+function TrashIcon(p) { return I(p, <><path d="M4 7h16M10 11v6M14 11v6M6 7l1 13a1 1 0 001 1h8a1 1 0 001-1l1-13M9 7V4a1 1 0 011-1h4a1 1 0 011 1v3" /></>) }
+
+// saved network-pharmacology runs (kind "netpharm") — list + reopen + delete
+function NetpharmJobsPanel({ jobs, onClose, onOpen, onDelete }) {
+  return (
+    <div className="fixed inset-0 z-50 grid place-items-center bg-ink-950/80 p-6 backdrop-blur-sm" onClick={onClose}>
+      <div className="relative flex max-h-[80vh] w-full max-w-2xl flex-col overflow-hidden rounded-2xl bg-ink-900 shadow-2xl ring-1 ring-ink-700/60" onClick={(e) => e.stopPropagation()}>
+        <div className="flex items-center justify-between border-b border-ink-700/60 px-5 py-3.5">
+          <div>
+            <h3 className="text-[14px] font-semibold text-white">Saved runs</h3>
+            <p className="text-[11px] text-slate-500">Network-pharmacology analyses are saved here — reopen one to restore its network, hubs and enrichment.</p>
+          </div>
+          <button onClick={onClose} className="grid h-8 w-8 place-items-center rounded-lg bg-ink-800/80 text-slate-400 hover:bg-ink-700 hover:text-white"><CloseIcon className="h-4 w-4" /></button>
+        </div>
+        <div className="min-h-0 flex-1 overflow-auto p-3">
+          {jobs.length === 0 && <div className="grid place-items-center py-12 text-[12px] text-slate-500">No saved runs yet.</div>}
+          <div className="flex flex-col gap-2">
+            {jobs.map((j) => (
+              <div key={j.job_id} className="flex items-center gap-3 rounded-xl border border-ink-700/60 bg-ink-800/30 px-3.5 py-3">
+                <div className="grid h-8 w-8 shrink-0 place-items-center rounded-lg bg-ink-800"><NetIcon className="h-4 w-4 text-violet" /></div>
+                <div className="min-w-0 flex-1">
+                  <div className="truncate text-[12.5px] font-medium text-slate-200">{j.label || 'Network pharmacology'}</div>
+                  <div className="text-[11px] text-slate-500">
+                    {j.status === 'running' && <span className="text-violet">Running…</span>}
+                    {j.status === 'done' && <span className="text-emerald-400">Done{j.counts ? ` · ${j.counts.shared} shared · ${j.counts.nodes} nodes` : ''}</span>}
+                    {j.status === 'error' && <span className="text-red-400">Failed{j.error ? ` · ${j.error}` : ''}</span>}
+                  </div>
+                </div>
+                {j.status === 'running' && <span className="h-4 w-4 shrink-0 animate-spin rounded-full border-2 border-violet/30 border-t-violet" />}
+                {j.status === 'done' && <button onClick={() => onOpen(j)} className="shrink-0 rounded-lg bg-violet/15 px-3 py-1.5 text-[11px] font-semibold text-violet ring-1 ring-violet/30 hover:bg-violet/25">Open</button>}
+                <button onClick={() => onDelete(j.job_id)} title="Delete" className="grid h-7 w-7 shrink-0 place-items-center rounded-lg text-slate-500 hover:bg-ink-700 hover:text-red-300"><TrashIcon className="h-3.5 w-3.5" /></button>
+              </div>
+            ))}
+          </div>
+        </div>
+      </div>
+    </div>
+  )
+}

@@ -9,7 +9,7 @@ import { saveFile } from '../download.js'
 export default function MoleculeViewer({
   style = 'cartoon', showLigand = true, spin = false, showInteractions = false,
   pdb = null, ligResn = 'MK1', empty = false, box = null, showBox = false,
-  covalentTarget = null, overlayLigand = null, hideNativeLigand = false,
+  covalentTarget = null, overlayLigand = null, hideNativeLigand = false, fileBase = '',
 }) {
   const boxKey = box ? `${box.center.x}|${box.center.y}|${box.center.z}|${box.size.x}|${box.size.y}|${box.size.z}` : ''
   const covKey = covalentTarget ? JSON.stringify(covalentTarget) : ''
@@ -58,7 +58,7 @@ export default function MoleculeViewer({
     viewer.setBackgroundColor(0x070b14, 1)
     viewer.render()
     if (!uri) return
-    saveFile(`DDS_complex_${bg}.png`, uri, 'image/png')
+    saveFile(`${fileBase || 'DDS_complex'}_3D_${bg}.png`, uri, 'image/png')
   }
 
   // create the viewer once
@@ -297,23 +297,25 @@ function drawInteractions(viewer, model, fontScale = 1, ligResn = 'MK1') {
   const cand = []
   for (const a of ligPolar) for (const b of protPolar) {
     const d = dist(a, b)
-    if (d >= 2.4 && d <= 3.6) cand.push({ a, b, d })
+    if (d >= 2.4 && d <= 3.5) cand.push({ a, b, d })
   }
   cand.sort((x, y) => x.d - y.d)
   const seenProt = new Set()
   const hb = []
   for (const p of cand) { if (seenProt.has(p.b.serial)) continue; seenProt.add(p.b.serial); hb.push(p) }
-  const hbRes = new Set(hb.map((p) => p.b.chain + p.b.resi))
+  const hbRes = new Set(hb.map((p) => p.b.resn + p.b.resi))
 
+  // hydrophobic: one contact per residue, merged across chains by name (matches the
+  // backend side-panel list and the 2D map, so a homodimer isn't double-counted)
   const perRes = {}
   for (const a of ligC) for (const b of protC) {
     const d = dist(a, b)
     if (d <= 4.0) {
-      const k = b.chain + b.resi
+      const k = b.resn + b.resi
       if (!perRes[k] || d < perRes[k].d) perRes[k] = { a, b, d }
     }
   }
-  const hydro = Object.values(perRes).filter((p) => !hbRes.has(p.b.chain + p.b.resi)).sort((x, y) => x.d - y.d).slice(0, 6)
+  const hydro = Object.values(perRes).filter((p) => !hbRes.has(p.b.resn + p.b.resi)).sort((x, y) => x.d - y.d).slice(0, 8)
 
   const resSet = {}
   ;[...hb.map((p) => ({ p, t: 'hb' })), ...hydro.map((p) => ({ p, t: 'hy' }))].forEach(({ p, t }) => {

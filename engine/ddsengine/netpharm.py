@@ -448,7 +448,7 @@ def compound_targets_multi(compounds, is_smiles=False, sources=("dgidb", "chembl
     targets into ONE set, tagging each target with which compounds hit it. Targets hit
     by more compounds rank higher. The pooled set then feeds the same
     disease-intersection → PPI → hub-gene pipeline (the shared goal: top hub genes)."""
-    qlist = [str(c).strip() for c in (compounds or []) if str(c).strip()][:20]
+    qlist = [str(c).strip() for c in (compounds or []) if str(c).strip()][:150]
     if not qlist:
         return {"compounds": [], "name": "0 compounds", "genes": [], "count": 0,
                 "covalent_count": 0, "scored_count": 0, "shared_by_multi": 0,
@@ -464,7 +464,7 @@ def compound_targets_multi(compounds, is_smiles=False, sources=("dgidb", "chembl
                 conf[g], src[g] = c, csrc[g]
             elif c is not None and (conf[g] is None or c > conf[g]):
                 conf[g], src[g] = c, csrc[g]
-            comps.setdefault(g, set()).add(name)
+            comps.setdefault(g, set()).add(name or q)   # fall back to the query if unresolved
     for g in parse_gene_list(uploaded):
         if g not in conf:
             conf[g], src[g] = None, "uploaded"

@@ -69,8 +69,8 @@ export default function ExportModal({ onClose, payload }) {
     try {
       if (kind === 'report') {
         const html = buildReportHTML(meta, sections)
-        if (reportFmt === 'print') await openPrint(html)
-        else await downloadText(`${meta.target.replace(/\s+/g, '_')}_DDS_report.html`, html, 'text/html')
+        if (reportFmt === 'print') await openPrint(html, `${fbase(meta)}_report`)
+        else await downloadText(`${fbase(meta)}_report.html`, html, 'text/html')
       } else if (kind === 'structures') {
         await exportStructures(meta, struct, structPose)
       } else if (kind === 'md') {
@@ -314,13 +314,13 @@ function downloadText(filename, text, mime) {
   return saveFile(filename, text, `${mime};charset=utf-8`)
 }
 
-function openPrint(html) {
+function openPrint(html, name = 'DDS_report') {
   // native app (pywebview): window.open is unreliable, so save via the native bridge
   if (typeof window !== 'undefined' && window.pywebview && window.pywebview.api) {
-    return saveFile('DDS_report.html', html, 'text/html;charset=utf-8')
+    return saveFile(`${name}.html`, html, 'text/html;charset=utf-8')
   }
   const w = window.open('', '_blank')
-  if (!w) return saveFile('DDS_report.html', html, 'text/html;charset=utf-8')
+  if (!w) return saveFile(`${name}.html`, html, 'text/html;charset=utf-8')
   w.document.write(html)
   w.document.close()
   w.focus()
@@ -328,6 +328,8 @@ function openPrint(html) {
 }
 
 function safe(s) { return String(s || 'structure').replace(/\s+/g, '_') }
+// filename base for all exports — the job name (already sanitised) when present
+function fbase(meta) { return (meta && meta.fileBase) || safe(meta && meta.target) }
 
 function pdbHeader(meta, what, extra = {}) {
   return [
@@ -349,7 +351,7 @@ async function exportStructures(meta, struct, structPose = '__top__') {
     if (!rows.length) throw new Error('no docked complexes available — re-run the screen')
     for (const r of rows) {
       const { complex_pdb } = await api.getComplex(r.complex_id)
-      await downloadText(`${safe(meta.target)}_${r.id}_complex.pdb`,
+      await downloadText(`${fbase(meta)}_${r.id}_complex.pdb`,
         pdbHeader(meta, 'DOCKED COMPLEX (receptor + ligand)', { ligand: r.id, affinity: r.affinity }) + strip(complex_pdb) + '\nEND\n',
         'chemical/x-pdb')
       await wait(180) // let the browser process each download
@@ -357,7 +359,7 @@ async function exportStructures(meta, struct, structPose = '__top__') {
     if (struct.receptor) {
       const { complex_pdb } = await api.getComplex(rows[0].complex_id)
       const rec = complex_pdb.split('\n').filter((l) => l.startsWith('ATOM') || l.startsWith('TER')).join('\n')
-      await downloadText(`${safe(meta.target)}_receptor.pdb`, pdbHeader(meta, 'RECEPTOR') + rec + '\nEND\n', 'chemical/x-pdb')
+      await downloadText(`${fbase(meta)}_receptor.pdb`, pdbHeader(meta, 'RECEPTOR') + rec + '\nEND\n', 'chemical/x-pdb')
     }
     return
   }
@@ -392,14 +394,14 @@ async function exportStructures(meta, struct, structPose = '__top__') {
       const folder = zip.folder(`pose_${p.pose}`)
       for (const [name, content] of poseFiles(pdb, p.affinity)) folder.file(name, content)
     }
-    await downloadBlob(`${safe(meta.target)}_${safe(meta.ligand)}_all_poses.zip`, await zip.generateAsync({ type: 'blob' }))
+    await downloadBlob(`${fbase(meta)}_all_poses.zip`, await zip.generateAsync({ type: 'blob' }))
     return
   }
 
   const pose = poses.find((p) => String(p.pose) === String(structPose)) || { complex_pdb: meta.complex_pdb, pose: meta.pose, affinity: meta.affinity }
   const pdb = (await getPdb(pose)) || meta.complex_pdb
   if (!pdb) throw new Error('no docked complex available')
-  const base = `${safe(meta.target)}_${safe(meta.ligand)}_pose${pose.pose}`
+  const base = `${fbase(meta)}_pose${pose.pose}`
   for (const [name, content] of poseFiles(pdb, pose.affinity)) {
     await downloadText(`${base}_${name}`, content, 'chemical/x-pdb')
     await wait(180)

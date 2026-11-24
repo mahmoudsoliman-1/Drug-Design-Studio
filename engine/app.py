@@ -452,11 +452,11 @@ def _run_dock(jid):
         pose_rows = []
         for p in poses:
             try:
-                l2d, inter_p = analysis.analyze(rec["pdbqt"], p["pdbqt"])
+                l2d, inter_p = analysis.analyze(rec["protein_pdb"], p["pdbqt"])
                 if ligand_2d is None:
                     ligand_2d = l2d
             except Exception:
-                inter_p = interactions.detect(rec["pdbqt"], p["pdbqt"])
+                inter_p = interactions.detect(rec["protein_pdb"], p["pdbqt"])
             cpdb = _build_complex(rec["protein_pdb"], p["pdbqt"])
             cpid = uuid.uuid4().hex[:12]
             _save_complex(cpid, cpdb)
@@ -597,9 +597,9 @@ def _run_screen(jid):
                 else:
                     best = res["poses"][0]
                 try:
-                    l2d, inter = analysis.analyze(rec["pdbqt"], best["pdbqt"])
+                    l2d, inter = analysis.analyze(rec["protein_pdb"], best["pdbqt"])
                 except Exception:
-                    l2d, inter = None, interactions.detect(rec["pdbqt"], best["pdbqt"])
+                    l2d, inter = None, interactions.detect(rec["protein_pdb"], best["pdbqt"])
                 cpx = _build_complex(rec["protein_pdb"], best["pdbqt"])
                 # tethered mode: refine so the warhead forms the covalent bond
                 if is_cov and cov_mode == "tethered" and cov and cov.get("warhead_xyz") and cov.get("nuc_xyz"):

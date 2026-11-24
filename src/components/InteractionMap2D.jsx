@@ -25,11 +25,12 @@ const H = 710
 const C = { x: 380, y: 322 }
 const RING_R = 233
 const DISC_R = 22
-const MAX_HYDRO = 5
+const MAX_HYDRO = 8
 const MAX_TOTAL = 10
 
-export default function InteractionMap2D({ ligand = 'Ligand', pose = 1, affinity, interactions = [], ligand2d = null, covalentBond = null }) {
+export default function InteractionMap2D({ ligand = 'Ligand', pose = 1, affinity, interactions = [], ligand2d = null, covalentBond = null, fileBase = '' }) {
   const svgRef = useRef(null)
+  const base = fileBase || ligand || 'DDS'
   const hasStruct = ligand2d && ligand2d.atoms && ligand2d.atoms.length
 
   // --- ligand structure transform ---
@@ -51,45 +52,74 @@ export default function InteractionMap2D({ ligand = 'Ligand', pose = 1, affinity
     })
   }
 
-  // --- dedupe residues (collapse dimer copies), keep strongest; cap hydrophobic ---
-  const byRes = {}
-  for (const it of interactions) {
-    const type = TYPES[it.type] ? it.type : 'Hydrophobic'
-    const cur = byRes[it.residue]
-    if (!cur || PRIO[type] < PRIO[cur.type] || (PRIO[type] === PRIO[cur.type] && it.distance < cur.distance)) {
-      byRes[it.residue] = { ...it, type }
-    }
+  // --- per-bond links + one sphere per residue -----------------------------
+  // Every interaction is kept as its own link (a residue making several H-bonds
+  // shows several connectors), so the visible count matches the 3D view and the
+  // side-panel list. Hydrophobic contacts are still deduped per residue + capped.
+  const norm = interactions.map((it) => ({ ...it, type: TYPES[it.type] ? it.type : 'Hydrophobic' }))
+  const polar = norm.filter((r) => r.type !== 'Hydrophobic')
+  const polarRes = new Set(polar.map((r) => r.residue))
+  const hydroByRes = {}
+  for (const r of norm) {
+    if (r.type !== 'Hydrophobic' || polarRes.has(r.residue)) continue
+    if (!hydroByRes[r.residue] || r.distance < hydroByRes[r.residue].distance) hydroByRes[r.residue] = r
   }
-  const dedup = Object.values(byRes)
-  const nonHydro = dedup.filter((r) => r.type !== 'Hydrophobic')
-  const hydro = dedup.filter((r) => r.type === 'Hydrophobic').sort((a, b) => a.distance - b.distance)
-  let residues = [...nonHydro, ...hydro.slice(0, Math.max(0, Math.min(MAX_HYDRO, MAX_TOTAL - nonHydro.length)))]
+  const hydro = Object.values(hydroByRes).sort((a, b) => a.distance - b.distance).slice(0, MAX_HYDRO)
+  let links = [...polar, ...hydro]
 
-  // covalent bond (tethered pose only): show it as a dedicated node bonded to the
-  // warhead atom, replacing any ordinary contact drawn for the same residue
+  // covalent bond (tethered pose only): replace any ordinary contact to that residue
   const showCov = covalentBond && hasStruct && atomById[covalentBond.ligAtom] != null
   if (showCov) {
-    residues = residues.filter((r) => r.residue !== covalentBond.residue)
-    residues.push({ residue: covalentBond.residue, type: 'Covalent', covalent: true,
-      lig_atom: covalentBond.ligAtom, distance: covalentBond.distance })
+    links = links.filter((r) => r.residue !== covalentBond.residue)
+    links.push({ residue: covalentBond.residue, type: 'Covalent', covalent: true,
+      lig_i: covalentBond.ligAtom, distance: covalentBond.distance })
   }
 
-  // anchor each residue to its ligand atom (or centre)
-  residues = residues.map((r) => {
-    const anchor = (hasStruct && atomById[r.lig_atom]) ? { x: atomById[r.lig_atom].x, y: atomById[r.lig_atom].y } : { x: C.x, y: C.y }
-    return { ...r, t: r.covalent ? COV : TYPES[r.type], anchor, pref: Math.atan2(anchor.y - C.y, anchor.x - C.x) }
+  // anchor each link to the ligand atom it contacts (or the ligand centre).
+  // Primary detector tags atoms as `lig_atom`, the fallback as `lig_i`.
+  links = links.map((r) => {
+    const idx = r.lig_atom != null ? r.lig_atom : r.lig_i
+    const at = hasStruct && idx != null ? atomById[idx] : null
+    const anchor = at ? { x: at.x, y: at.y } : { x: C.x, y: C.y }
+    return { ...r, t: r.covalent ? COV : TYPES[r.type], anchor }
   })
 
-  // --- place on ring: even spacing (no overlaps), rotated to best match anchor directions ---
-  residues.sort((a, b) => a.pref - b.pref)
-  const n = residues.length || 1
+  // one sphere per residue (strongest type wins); its anchor = mean of its links'
+  // anchors, used only to steer ring placement. Keep a per-residue bond count.
+  const nodeMap = {}
+  for (const r of links) {
+    const n0 = nodeMap[r.residue] || (nodeMap[r.residue] = { residue: r.residue, type: r.type, t: r.t, sx: 0, sy: 0, k: 0, count: 0, covalent: false })
+    if (PRIO[r.type] < PRIO[n0.type]) { n0.type = r.type; n0.t = r.t }
+    if (r.covalent) n0.covalent = true
+    n0.sx += r.anchor.x; n0.sy += r.anchor.y; n0.k += 1; n0.count += 1
+  }
+  let nodes = Object.values(nodeMap).map((nd) => {
+    const anchor = { x: nd.sx / nd.k, y: nd.sy / nd.k }
+    return { ...nd, anchor, pref: Math.atan2(anchor.y - C.y, anchor.x - C.x) }
+  })
+
+  // --- place residue spheres on the ring (even spacing, rotated to anchors) ---
+  nodes.sort((a, b) => a.pref - b.pref)
+  const n = nodes.length || 1
   let sumSin = 0, sumCos = 0
-  residues.forEach((r, i) => { const d = r.pref - (i * 2 * Math.PI) / n; sumSin += Math.sin(d); sumCos += Math.cos(d) })
+  nodes.forEach((r, i) => { const d = r.pref - (i * 2 * Math.PI) / n; sumSin += Math.sin(d); sumCos += Math.cos(d) })
   const offset = Math.atan2(sumSin, sumCos)
-  residues.forEach((r, i) => {
+  const discByRes = {}
+  nodes.forEach((r, i) => {
     r.angle = (i * 2 * Math.PI) / n + offset
     r.disc = { x: C.x + RING_R * Math.cos(r.angle), y: C.y + RING_R * Math.sin(r.angle) }
+    discByRes[r.residue] = r.disc
   })
+  links.forEach((r) => { r.disc = discByRes[r.residue] || { x: C.x, y: C.y } })
+
+  // per-type interaction counts (shown in the legend) so the 2D's numbers are
+  // explicit and always match the 3D viewer and the side-panel list.
+  const typeCounts = {}
+  links.forEach((r) => {
+    const k = r.covalent ? 'cov' : (TYPES[r.type] ? TYPES[r.type].key : 'hydro')
+    typeCounts[k] = (typeCounts[k] || 0) + 1
+  })
+  const legendRows = Object.values(TYPES).filter((t) => (typeCounts[t.key] || 0) > 0).length + (showCov ? 1 : 0)
 
   return (
     <div className="flex flex-col">
@@ -99,11 +129,11 @@ export default function InteractionMap2D({ ligand = 'Ligand', pose = 1, affinity
           <p className="text-[11px] text-slate-500">{ligand}{pose ? ` · Pose ${pose}` : ''}{affinity != null ? ` · ${affinity} kcal/mol` : ''}</p>
         </div>
         <div className="flex items-center gap-2">
-          <button onClick={() => downloadPNG(svgRef.current, `${ligand}_interactions`, 3)}
+          <button onClick={() => downloadPNG(svgRef.current, `${base}_2D`, 3)}
             className="flex items-center gap-1.5 rounded-lg bg-gradient-to-r from-accent to-accent-dim px-3 py-1.5 text-[12px] font-semibold text-ink-950 hover:brightness-110">
             <DownloadIcon /> PNG (high-res)
           </button>
-          <button onClick={() => downloadSVG(svgRef.current, `${ligand}_interactions`)}
+          <button onClick={() => downloadSVG(svgRef.current, `${base}_2D`)}
             className="rounded-lg bg-ink-700 px-3 py-1.5 text-[12px] font-medium text-slate-200 hover:bg-ink-600">SVG</button>
         </div>
       </div>
@@ -133,8 +163,8 @@ export default function InteractionMap2D({ ligand = 'Ligand', pose = 1, affinity
 
             <ellipse cx={C.x} cy={C.y} rx="150" ry="112" fill="url(#ligHalo)" />
 
-            {/* connectors + distance pills */}
-            {residues.map((r, i) => {
+            {/* connectors + distance pills — one per bond */}
+            {links.map((r, i) => {
               const d = dir(r.disc, r.anchor)
               const from = { x: r.disc.x + d.x * DISC_R, y: r.disc.y + d.y * DISC_R }
               const to = { x: r.anchor.x - d.x * 6, y: r.anchor.y - d.y * 6 }
@@ -169,19 +199,25 @@ export default function InteractionMap2D({ ligand = 'Ligand', pose = 1, affinity
             {hasStruct ? <Molecule atomById={atomById} bonds={ligand2d.bonds} rings={rings} />
               : <g><circle cx={C.x} cy={C.y} r="34" fill="#ffffff" stroke="#0f766e" strokeWidth="2" strokeDasharray="4 3" /><text x={C.x} y={C.y + 4} textAnchor="middle" fontSize="11" fill="#0f766e">ligand</text></g>}
 
-            {/* residue spheres */}
-            {residues.map((r, i) => (
+            {/* residue spheres — one per residue; badge shows how many bonds it makes */}
+            {nodes.map((r, i) => (
               <g key={`s${i}`}>
                 <circle cx={r.disc.x} cy={r.disc.y} r={DISC_R + 5} fill={r.t.glow} opacity="0.28" filter="url(#ddsGlow)" />
                 <circle cx={r.disc.x} cy={r.disc.y} r={DISC_R} fill={`url(#sph-${r.t.key})`} />
                 <ellipse cx={r.disc.x - 6} cy={r.disc.y - 7.5} rx="7" ry="4.2" fill="#ffffff" opacity="0.5" />
                 <text x={r.disc.x} y={r.disc.y + 4} textAnchor="middle" fontSize="10.5" fontWeight="700" fill="#0f172a">{r.residue}</text>
+                {r.count > 1 && !r.covalent && (
+                  <g>
+                    <circle cx={r.disc.x + DISC_R - 2} cy={r.disc.y - DISC_R + 2} r="8" fill={r.t.edge} stroke="#ffffff" strokeWidth="1.3" />
+                    <text x={r.disc.x + DISC_R - 2} y={r.disc.y - DISC_R + 5.5} textAnchor="middle" fontSize="9" fontWeight="700" fill="#ffffff">{r.count}</text>
+                  </g>
+                )}
               </g>
             ))}
 
             {/* ligand name is shown in the header/subtitle above — no central pill,
                 so it never overlaps the interaction connectors */}
-            <Legend x={30} y={H - (showCov ? 106 : 84)} covalent={showCov} />
+            <Legend x={30} y={H - 30 - Math.max(1, legendRows) * 22} covalent={showCov} counts={typeCounts} />
           </svg>
         </div>
       </div>
@@ -225,18 +261,22 @@ function Bond({ b, atomById }) {
   return <line x1={p1.x} y1={p1.y} x2={p2.x} y2={p2.y} stroke="#1e293b" strokeWidth="1.8" strokeLinecap="round" />
 }
 
-function Legend({ x, y, covalent }) {
-  const items = covalent ? [...Object.values(TYPES), COV] : Object.values(TYPES)
+function Legend({ x, y, covalent, counts = {} }) {
+  // show only the interaction types actually present, each with its count, so the
+  // numbers here match the 3D viewer and the side panel exactly
+  const present = Object.values(TYPES).filter((t) => (counts[t.key] || 0) > 0)
+  const items = covalent ? [...present, COV] : present
   return (
     <g>
-      <text x={x} y={y - 16} fontSize="10.5" fontWeight="700" fill="#334155" letterSpacing="0.5">INTERACTION TYPES</text>
+      <text x={x} y={y - 16} fontSize="10.5" fontWeight="700" fill="#334155" letterSpacing="0.5">INTERACTIONS</text>
       {items.map((t, i) => {
         const yy = y + i * 22
+        const c = counts[t.key] || 0
         return (
           <g key={t.key}>
             <circle cx={x + 8} cy={yy} r="7" fill={`url(#sph-${t.key})`} />
             <line x1={x + 24} y1={yy} x2={x + 50} y2={yy} stroke={t.line} strokeWidth={t.key === 'cov' ? '3.5' : '2'} strokeDasharray={t.dash} strokeLinecap="round" />
-            <text x={x + 62} y={yy + 4} fontSize="11" fill="#475569">{t.legend}</text>
+            <text x={x + 62} y={yy + 4} fontSize="11" fill="#475569">{t.legend}{t.key === 'cov' ? '' : ` — ${c}`}</text>
           </g>
         )
       })}

@@ -8,6 +8,33 @@ from openbabel import pybel
 LIG_RES = "LIG"
 
 
+def _write_back_clean(original_pdb, obmol):
+    """Return a clean PDB: the ORIGINAL file with only the x/y/z columns replaced
+    by the minimized coordinates. Open Babel keeps the input (heavy) atoms as the
+    first N atoms in file order, so they map 1:1 onto the original ATOM/HETATM
+    lines. This preserves atom names, residues, chains, occupancies and B-factors,
+    and drops Open Babel's cruft (COMPND/AUTHOR header, the thousands of CONECT
+    records, MASTER) and the hydrogens added only for the force-field run — giving
+    output identical in format to the clean exported structure."""
+    atoms = list(ob.OBMolAtomIter(obmol))
+    out, ai = [], 0
+    for line in original_pdb.splitlines():
+        rec = line[:6]
+        if rec in ("ATOM  ", "HETATM"):
+            if ai < len(atoms):
+                a = atoms[ai]
+                line = line[:30] + ("%8.3f%8.3f%8.3f" % (a.GetX(), a.GetY(), a.GetZ())) + line[54:]
+                ai += 1
+            out.append(line)
+        elif rec in ("CONECT", "MASTER"):
+            continue  # drop connectivity/bookkeeping noise
+        else:
+            out.append(line)  # keep HEADER/TITLE/CRYST1/TER/END and other metadata
+    if not any(l.startswith("END") for l in out):
+        out.append("END")
+    return "\n".join(out) + "\n"
+
+
 def minimize_complex(complex_pdb, mode="pocket", forcefield="uff", steps=500, pocket_radius=6.0):
     """mode: 'ligand' (only the ligand moves), 'pocket' (ligand + residues within
     pocket_radius Å), or 'complex' (everything moves). Returns the minimized PDB."""
@@ -64,7 +91,7 @@ def minimize_complex(complex_pdb, mode="pocket", forcefield="uff", steps=500, po
     e1 = ff.Energy()
 
     return {
-        "pdb": mol.write("pdb"),
+        "pdb": _write_back_clean(complex_pdb, obmol),
         "energy_before": round(e0, 1),
         "energy_after": round(e1, 1),
         "n_free_atoms": len(free) if mode != "complex" else obmol.NumAtoms(),

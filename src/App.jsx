@@ -8,6 +8,13 @@ import { saveFile } from './download.js'
 import { LIBRARY, ScreeningLibraryPanel, LibraryCenter, ScreeningResults } from './components/VirtualScreening.jsx'
 import * as api from './api.js'
 import Logo from './components/Logo.jsx'
+
+// Turn a job name into a safe filename base (used for every export: 2D/3D images,
+// report, PDB downloads, exported structures) so files are named after the job.
+export function slugName(s, fallback = 'DDS') {
+  const t = String(s || '').trim().replace(/[^\w.\-]+/g, '_').replace(/_+/g, '_').replace(/^[_.]+|[_.]+$/g, '')
+  return t || fallback
+}
 import {
   ResponsiveContainer, BarChart, Bar, XAxis, YAxis, Tooltip, Cell,
   ScatterChart, Scatter, ZAxis, CartesianGrid, LabelList,
@@ -97,6 +104,7 @@ export default function DockingModule({ onSwitchModules, handoff, onHandoffConsu
   const [handoffNote, setHandoffNote] = useState('')
   const [dockRes, setDockRes] = useState(null)
   const [screenRes, setScreenRes] = useState(null)
+  const [jobLabel, setJobLabel] = useState('')   // name of the loaded result's job (for export filenames)
   const [cleared, setCleared] = useState(false)
   const [removedComp, setRemovedComp] = useState([]) // structure-editor: removed component keys
   const [receptorPh, setReceptorPh] = useState(7.4) // pH for receptor protonation (Open Babel)
@@ -111,6 +119,10 @@ export default function DockingModule({ onSwitchModules, handoff, onHandoffConsu
   const [covMaxDist, setCovMaxDist] = useState(3.5)
   const [covMode, setCovMode] = useState('geometry')       // 'geometry' | 'tethered'
   const [covWarheads, setCovWarheads] = useState([])       // warhead catalog for the override menu
+
+  // user-editable name for the next run (shown in the Jobs list). Empty = use the
+  // auto default. Reset on New Run so each run starts from a fresh default.
+  const [jobName, setJobName] = useState('')
 
   // background jobs
   const [jobs, setJobs] = useState([])
@@ -183,6 +195,7 @@ export default function DockingModule({ onSwitchModules, handoff, onHandoffConsu
             if (full.status === 'done') {
               if (full.kind === 'dock') { setDockRes(full.result); setMode('single') }
               else if (full.kind === 'screen') { setScreenRes(full.result); setMode('screen') }
+              setJobLabel(full.label || '')
               setHasResults(true); setActive('results')
             } else if (full.status === 'error') {
               setErrorMsg(full.error || 'Job failed.')
@@ -270,6 +283,9 @@ export default function DockingModule({ onSwitchModules, handoff, onHandoffConsu
   }, [covalent, receptor?.receptor_id, box?.center?.x, box?.center?.y, box?.center?.z, box?.size?.x, box?.size?.y, box?.size?.z])
 
   const activeJob = jobs.find((j) => j.job_id === activeJobId) || null
+  // the Docking module only lists/opens docking-type jobs; netpharm/nano/qsar runs
+  // live in their own modules' jobs panels, so they must not appear (or mis-open) here
+  const dockJobs = jobs.filter((j) => ['dock', 'screen', 'mmgbsa', 'mmgbsa-batch', 'mmgbsa-install'].includes(j.kind))
   // true whenever the awaited job is still running on the server — survives tab/mode
   // navigation (unlike the transient local `running` flag), so the indicators persist
   const isRunning = running || (activeJob != null && activeJob.status === 'running')
@@ -277,10 +293,11 @@ export default function DockingModule({ onSwitchModules, handoff, onHandoffConsu
   async function openJob(summary) {
     if (summary.status !== 'done') return
     const full = await api.getJob(summary.job_id)
-    if (full.kind === 'mmgbsa') { setMmRes(full.result); setMode('single'); setHasResults(true); setActive('results'); setJobsOpen(false); return }
+    if (full.kind === 'mmgbsa') { setMmRes(full.result); setJobLabel(full.label || summary.label || ''); setMode('single'); setHasResults(true); setActive('results'); setJobsOpen(false); return }
     resetMm()   // a different docked/screened result is being loaded — drop any stale ΔG
     if (full.kind === 'dock') { setDockRes(full.result); setMode('single') }
     else if (full.kind === 'screen') { setScreenRes(full.result); setMode('screen') }
+    setJobLabel(full.label || summary.label || '')
     setHasResults(true); setActive('results'); setJobsOpen(false)
   }
   async function removeJob(id) {
@@ -365,6 +382,7 @@ export default function DockingModule({ onSwitchModules, handoff, onHandoffConsu
     clearReceptor()
     setLigandFile(null); setLigandSmiles(DEFAULT_SMILES)
     setCovalent(false); setCovMode('geometry')
+    setJobName('')
     setActiveJob(null); setRunning(false); resetMm()
   }
 
@@ -399,6 +417,18 @@ export default function DockingModule({ onSwitchModules, handoff, onHandoffConsu
     if (receptor) reprepareReceptor(keepWaters, keepIons, removedComp, v)
   }
 
+  // Auto job name when the user hasn't typed one. Includes the ligand (file name
+  // or a short SMILES hint) so even the default differentiates runs on the same PDB.
+  function autoJobLabel(forScreen = isScreen) {
+    const base = receptor?.name || 'receptor'
+    const cov = covalent ? ' · covalent' : ''
+    if (forScreen) return `${base} · screen ${parseSmilesLibrary(screenSmiles).length}${cov}`
+    const s = ligandSmiles.trim()
+    const lig = ligandFile?.name ? ligandFile.name.replace(/\.[^.]+$/, '')
+      : (s ? (s.length > 16 ? s.slice(0, 16) + '…' : s) : 'ligand')
+    return `${base} · ${lig}${cov}`
+  }
+
   async function runDocking() {
     setErrorMsg('')
     if (engine !== 'online') { setErrorMsg('Engine offline — start the DDS engine (see banner).'); return }
@@ -413,7 +443,7 @@ export default function DockingModule({ onSwitchModules, handoff, onHandoffConsu
         receptor_id: receptor.receptor_id, ...lig, protonate, ph: 7.4,
         center: box.center, size: box.size, scoring, exhaustiveness, num_modes: 9,
         ...covalentPayload(),
-        label: `${receptor.name} · ${covalent ? 'covalent ' : ''}docking`,
+        label: jobName.trim() || autoJobLabel(false),
       })
       setActiveJob(job_id)
     } catch (e) { setErrorMsg(engErr(e)); setRunning(false) }
@@ -442,7 +472,7 @@ export default function DockingModule({ onSwitchModules, handoff, onHandoffConsu
         receptor_id: receptor.receptor_id, ligands: ligs,
         center: box.center, size: box.size, scoring, exhaustiveness: Math.min(exhaustiveness, 8),
         ...covalentPayload(),
-        label: `${receptor.name} · ${covalent ? 'covalent ' : ''}screen ${ligs.length}`,
+        label: jobName.trim() || autoJobLabel(true),
       })
       setActiveJob(job_id)
     } catch (e) { setErrorMsg(engErr(e)); setRunning(false) }
@@ -460,9 +490,10 @@ export default function DockingModule({ onSwitchModules, handoff, onHandoffConsu
 
       <div className="flex min-w-0 flex-1 flex-col">
         <TopBar onRun={runDocking} running={isRunning} isScreen={isScreen} covalent={covalent}
+          jobName={jobName} setJobName={setJobName} jobPlaceholder={autoJobLabel()}
           bestAffinity={hasResults ? bestAffinity : null} receptorName={receptor?.name}
           ligandCount={isScreen ? parseSmilesLibrary(screenSmiles).length : 1} scoring={scoring}
-          activeJob={activeJob} runningCount={jobs.filter((j) => j.status === 'running').length}
+          activeJob={activeJob} runningCount={dockJobs.filter((j) => j.status === 'running').length}
           onOpenJobs={() => setJobsOpen(true)} onClear={clearWorkspace} hasReceptor={!!receptor || hasResults}
           onSwitchModules={onSwitchModules} />
 
@@ -480,7 +511,7 @@ export default function DockingModule({ onSwitchModules, handoff, onHandoffConsu
             <>
               {isScreen ? <ScreeningResults result={screenRes} receptor={receptor} box={box} scoring={scoring}
                     mmMap={mmBatchMap} mmBusy={mmBatchBusy} mmProg={mmBatchProg} onRunBatch={runMmgbsaBatch} />
-                : <ResultsView result={dockRes} receptorName={receptor?.name} receptor={receptor} ligandSmiles={ligandSmiles}
+                : <ResultsView result={dockRes} receptorName={receptor?.name} receptor={receptor} ligandSmiles={ligandSmiles} jobLabel={jobLabel}
                     mmRes={mmRes} mmBusy={mmBusy} mmErr={mmErr} onRunMmgbsa={runMmgbsa} onClearMm={resetMm} />}
               {aiOpen ? (
                 <aside className="flex w-[270px] shrink-0 flex-col gap-4">
@@ -570,7 +601,7 @@ export default function DockingModule({ onSwitchModules, handoff, onHandoffConsu
         </main>
       </div>
 
-      {jobsOpen && <JobsPanel jobs={jobs} activeJobId={activeJobId} onClose={() => setJobsOpen(false)}
+      {jobsOpen && <JobsPanel jobs={dockJobs} activeJobId={activeJobId} onClose={() => setJobsOpen(false)}
         onOpen={openJob} onDelete={removeJob} />}
 
     </div>
@@ -800,16 +831,27 @@ function ModeTab({ active, onClick, icon: Icon, label, sub }) {
 /* ------------------------------------------------------------------ */
 /*  Top bar                                                            */
 /* ------------------------------------------------------------------ */
-function TopBar({ onRun, running, bestAffinity, isScreen, covalent, receptorName, ligandCount, scoring, activeJob, runningCount, onOpenJobs, onClear, hasReceptor, onSwitchModules }) {
+function TopBar({ onRun, running, bestAffinity, isScreen, covalent, receptorName, ligandCount, scoring, activeJob, runningCount, onOpenJobs, onClear, hasReceptor, onSwitchModules, jobName, setJobName, jobPlaceholder }) {
   return (
     <header className="flex items-center gap-4 border-b border-ink-700/60 bg-ink-900/40 px-5 py-3">
-      <div className="flex items-center gap-2.5">
-        <div className="relative h-2 w-2 rounded-full bg-accent pulse-dot" />
-        <div>
-          <div className="text-[13px] font-semibold text-white">
-            {receptorName || 'No receptor loaded'} · {isScreen ? 'Virtual Screening' : 'Docking'}
+      <div className="flex min-w-0 items-center gap-2.5">
+        <div className="relative h-2 w-2 shrink-0 rounded-full bg-accent pulse-dot" />
+        <div className="min-w-0">
+          {/* Editable job name — defaults to an auto label (receptor · ligand); whatever
+              is here becomes the job's name in the Jobs list. */}
+          <div className="group flex items-center gap-1">
+            <span className="shrink-0 text-[11px] font-medium text-slate-500">Job Name:</span>
+            <input
+              value={jobName ?? ''}
+              onChange={(e) => setJobName?.(e.target.value)}
+              placeholder={jobPlaceholder || (receptorName ? `${receptorName} · ${isScreen ? 'Virtual Screening' : 'Docking'}` : 'No receptor loaded')}
+              title="Name this job — this is what shows in the Jobs list"
+              spellCheck={false}
+              className="w-[280px] max-w-[46vw] truncate rounded-md bg-transparent px-1.5 py-0.5 text-[13px] font-semibold text-white placeholder-slate-400 outline-none ring-1 ring-transparent transition hover:ring-ink-600 focus:bg-ink-950/60 focus:ring-accent/50"
+            />
+            <PencilIcon className="h-3 w-3 shrink-0 text-slate-600 transition group-hover:text-slate-400" />
           </div>
-          <div className="text-[11px] text-slate-500">
+          <div className="truncate px-1.5 text-[11px] text-slate-500">
             {receptorName ? `${receptorName} · ` : ''}{isScreen ? `${ligandCount} compounds` : '1 ligand'} · {scoring} scoring
           </div>
         </div>
@@ -1010,7 +1052,7 @@ function StepPanel({ active, steps, exhaustiveness, setExhaustiveness, scoring, 
                 </button>
               </div>
               <div className="mt-1 text-slate-400">
-                {receptor.n_atoms} atoms · {receptor.n_residues} residues{receptor.detected_ligands?.length ? ` · site from ${receptor.detected_ligands[0]}` : ''}
+                {receptor.n_atoms} atoms · {receptor.n_residues} residues{receptor.ligand_resn ? ` · site from ${receptor.ligand_resn}` : ''}
                 {receptor.kept_waters ? ` · +${receptor.n_waters} waters` : ''}{receptor.kept_ions ? ` · +${receptor.n_ions} ions` : ''}
               </div>
               {receptor.components?.length > 0 && (
@@ -1438,7 +1480,8 @@ function AiPanel({ active, mode, receptor, box, ligProps, ligandSmiles, dockRes,
 /* ------------------------------------------------------------------ */
 /*  Results dashboard                                                 */
 /* ------------------------------------------------------------------ */
-function ResultsView({ result, receptorName, receptor, ligandSmiles, mmRes, mmBusy, mmErr, onRunMmgbsa, onClearMm }) {
+function ResultsView({ result, receptorName, receptor, ligandSmiles, jobLabel, mmRes, mmBusy, mmErr, onRunMmgbsa, onClearMm }) {
+  const fileBase = slugName(jobLabel || receptorName || 'complex')
   const [viewMode, setViewMode] = useState('off') // 'off' (structure only) | '3d' | '2d' — interaction view
   const [exportOpen, setExportOpen] = useState(false)
   const [validateOpen, setValidateOpen] = useState(false)
@@ -1490,7 +1533,7 @@ function ResultsView({ result, receptorName, receptor, ligandSmiles, mmRes, mmBu
   }
   function downloadMin() {
     if (!minRes?.pdb) return
-    saveFile(`${(receptorName || 'complex')}_minimized.pdb`, minRes.pdb, 'chemical/x-pdb')
+    saveFile(`${fileBase}_minimized.pdb`, minRes.pdb, 'chemical/x-pdb')
   }
 
   function startMmgbsa() {
@@ -1504,7 +1547,7 @@ function ResultsView({ result, receptorName, receptor, ligandSmiles, mmRes, mmBu
   }
   function downloadMm() {
     if (!mmRes?.pdb) return
-    saveFile(`${(receptorName || 'complex')}_ssMMGBSA.pdb`, mmRes.pdb, 'chemical/x-pdb')
+    saveFile(`${fileBase}_MMGBSA.pdb`, mmRes.pdb, 'chemical/x-pdb')
   }
 
   const poses = result?.poses || []
@@ -1664,7 +1707,7 @@ function ResultsView({ result, receptorName, receptor, ligandSmiles, mmRes, mmBu
             </div>
             {viewMode === '2d' ? (
               <div className="overflow-hidden rounded-xl">
-                <InteractionMap2D ligand={ligName} pose={selNum} affinity={selAff} interactions={selInter} ligand2d={result?.ligand_2d}
+                <InteractionMap2D ligand={ligName} pose={selNum} affinity={selAff} interactions={selInter} ligand2d={result?.ligand_2d} fileBase={fileBase}
                   covalentBond={sel.covalent?.mode === 'tethered' && sel.covalent.warhead_atom != null
                     ? { ligAtom: sel.covalent.warhead_atom, residue: sel.covalent.residue, distance: sel.covalent.distance } : null} />
               </div>
@@ -1672,7 +1715,7 @@ function ResultsView({ result, receptorName, receptor, ligandSmiles, mmRes, mmBu
               <>
                 <div className="h-[360px]">
                   <MoleculeViewer style="cartoon" showLigand spin={resSpin} showInteractions={viewMode === '3d'}
-                    pdb={mmRes?.pdb || minRes?.pdb || selComplex} ligResn="LIG"
+                    pdb={mmRes?.pdb || minRes?.pdb || selComplex} ligResn="LIG" fileBase={fileBase}
                     covalentTarget={sel.covalent && sel.covalent.nuc_xyz ? {
                       chain: sel.covalent.chain, resi: sel.covalent.nuc_resi, residueLabel: sel.covalent.residue,
                       atomLabel: sel.covalent.atom_label, nuc: sel.covalent.nuc_xyz,
@@ -1771,7 +1814,7 @@ function ResultsView({ result, receptorName, receptor, ligandSmiles, mmRes, mmBu
 
       {exportOpen && (
         <ExportModal onClose={() => setExportOpen(false)} payload={{
-          mode: 'single', target: (receptorName || 'Receptor'), pdb: (receptorName || ''),
+          mode: 'single', target: (receptorName || 'Receptor'), pdb: (receptorName || ''), fileBase,
           scoring: result?.params?.scoring || 'vina', exhaustiveness: result?.params?.exhaustiveness ?? 16, params: result?.params,
           ligand: ligName, pose: selNum, affinity: selAff, complex_pdb: selComplex,
           poses, interactions: selInter, rows: [{ name: ligName, affinity: best, mw: props.mw, logp: props.logp, qed: props.qed }],
@@ -2053,3 +2096,4 @@ function ChevronDownIcon(p) { return I(p, <><path d="M6 9l6 6 6-6" /></>) }
 function ChevronRightIcon(p) { return I(p, <><path d="M9 6l6 6-6 6" /></>) }
 function RefreshIcon(p) { return I(p, <><path d="M3 12a9 9 0 0115.5-6.4L21 8M21 3v5h-5M21 12a9 9 0 01-15.5 6.4L3 16M3 21v-5h5" /></>) }
 function DocsIcon(p) { return I(p, <><path d="M4 5a2 2 0 012-2h12v16H6a2 2 0 00-2 2zM8 3v16M11 7h4M11 10h4" /></>) }
+function PencilIcon(p) { return I(p, <><path d="M12 20h9" /><path d="M16.5 3.5a2.1 2.1 0 013 3L7 19l-4 1 1-4z" /></>) }

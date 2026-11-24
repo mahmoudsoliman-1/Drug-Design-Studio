@@ -10,6 +10,30 @@ _IONS = {"NA", "CL", "K", "MG", "CA", "ZN", "MN", "FE", "CU", "CO", "NI",
          "CD", "BR", "IOD", "SO4", "PO4"}
 # heteroatoms never treated as the bound ligand (waters, ions, buffers, cryo-agents)
 _SKIP_HET = _WATER | _IONS | {"GOL", "EDO", "ACT", "DMS", "PEG", "MPD", "FMT", "TRS"}
+
+# prosthetic groups, cofactors, glycans and detergents that ARE kept in the model
+# (they can be part of the receptor) but must never be auto-chosen as the bound
+# drug ligand — otherwise a large cofactor such as a heme (e.g. COH in 5IKR) or a
+# glycan chain outranks the real, smaller inhibitor by sheer atom count.
+_COFACTOR = frozenset((
+    # heme / porphyrin / chlorophyll / corrin
+    "HEM HEC HEA HEB HAS HDD HNI HIF COH DHE HCO HEV HEG HP5 HE5 1CP MH0 VEA SRM "
+    "CLA CL0 CHL BCL BCB BPB BPH PHO BLA HEO MHM FEC ZNH CYC B12 COB CNC "
+    # flavins, dinucleotides & enzyme cofactors
+    "FAD FMN FDA RBF NAD NAI NAP NDP NAJ NAC NDO CAA COA ACO SAM SAH SFG TPP TDP "
+    "PLP PMP PDP BTN BTI MGD 2MD MTE PQQ F43 COM THG H4B MTQ "
+    # iron-sulfur & metal clusters
+    "SF4 FES F3S FS4 FEO CFM CLF CFN ICS HC0 NFU FS3 CUA OEC "
+    # glycans / sugars
+    "NAG NDG BMA MAN BGC GLC GAL GLA FUC FUL FCA FCB XYP XYS SIA SLB NGA A2G RAM "
+    "RIB ARA ARB GCU IDR MMA G6P F6P SUC TRE LAT MAL BDP IDS KDO GLP SGN "
+    # detergents / lipids / fatty acids
+    "BOG BNG LDA LMT DDM C8E HTG SOG OGA OLC OLA OLB PLM MYR STE PEE PGV PGW LHG "
+    "PX4 D10 DAO HEX HP6 CXE F09 UND LI1 SDS LMN LMG 7PH 9PE PC1 "
+    # PEGs / cryo / buffers kept in the model but never a pocket ligand
+    "PG4 PGE 1PE 2PE P6G 7PE 12P 15P DMF ACY TAM BTB EPE MES BME DTT IMD CIT FLC "
+    "TLA MLA MLI SIN BEZ SPD SPM PGO MRD POP"
+).split())
 # standard polymer residues, for classifying chains as protein vs nucleic acid
 _AA = {"ALA", "ARG", "ASN", "ASP", "CYS", "GLN", "GLU", "GLY", "HIS", "ILE",
        "LEU", "LYS", "MET", "PHE", "PRO", "SER", "THR", "TRP", "TYR", "VAL",
@@ -170,10 +194,14 @@ def prepare_receptor(pdb_text, ph=7.4, keep_waters=False, keep_ions=False, remov
     if not chain_lines and not het_groups:
         raise ValueError("no ATOM/HETATM records found")
 
-    # largest heteroatom group = bound ligand; the rest are cofactors
+    # bound ligand = the largest heteroatom group that is NOT a known cofactor,
+    # glycan, detergent or buffer (so the real inhibitor wins over e.g. a heme or a
+    # glycan). Fall back to all groups only if every heteroatom looks like a cofactor.
     ligand_key = None
     if het_groups:
-        (lresn, lchain, lresi), _ = max(het_groups.items(), key=lambda kv: len(kv[1]))
+        candidates = {k: v for k, v in het_groups.items() if k[0] not in _COFACTOR}
+        pool = candidates or het_groups
+        (lresn, lchain, lresi), _ = max(pool.items(), key=lambda kv: len(kv[1]))
         ligand_key = _het_key((lresn, lchain, lresi))
 
     # ---- assemble kept lines ----
