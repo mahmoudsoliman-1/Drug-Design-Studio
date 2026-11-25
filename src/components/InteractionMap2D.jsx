@@ -84,33 +84,21 @@ export default function InteractionMap2D({ ligand = 'Ligand', pose = 1, affinity
     return { ...r, t: r.covalent ? COV : TYPES[r.type], anchor }
   })
 
-  // one sphere per residue (strongest type wins); its anchor = mean of its links'
-  // anchors, used only to steer ring placement. Keep a per-residue bond count.
-  const nodeMap = {}
-  for (const r of links) {
-    const n0 = nodeMap[r.residue] || (nodeMap[r.residue] = { residue: r.residue, type: r.type, t: r.t, sx: 0, sy: 0, k: 0, count: 0, covalent: false })
-    if (PRIO[r.type] < PRIO[n0.type]) { n0.type = r.type; n0.t = r.t }
-    if (r.covalent) n0.covalent = true
-    n0.sx += r.anchor.x; n0.sy += r.anchor.y; n0.k += 1; n0.count += 1
-  }
-  let nodes = Object.values(nodeMap).map((nd) => {
-    const anchor = { x: nd.sx / nd.k, y: nd.sy / nd.k }
-    return { ...nd, anchor, pref: Math.atan2(anchor.y - C.y, anchor.x - C.x) }
-  })
+  // ONE sphere per bond — a residue making several bonds gets several spheres, each
+  // its own colour and its own connector, so every interaction is clearly separated
+  // (no stacked lines, no count badges). Each node carries its bond's data.
+  let nodes = links.map((r, i) => ({ ...r, id: i, pref: Math.atan2(r.anchor.y - C.y, r.anchor.x - C.x) }))
 
-  // --- place residue spheres on the ring (even spacing, rotated to anchors) ---
+  // --- place spheres on the ring (even spacing, rotated toward their anchors) ---
   nodes.sort((a, b) => a.pref - b.pref)
   const n = nodes.length || 1
   let sumSin = 0, sumCos = 0
   nodes.forEach((r, i) => { const d = r.pref - (i * 2 * Math.PI) / n; sumSin += Math.sin(d); sumCos += Math.cos(d) })
   const offset = Math.atan2(sumSin, sumCos)
-  const discByRes = {}
   nodes.forEach((r, i) => {
     r.angle = (i * 2 * Math.PI) / n + offset
     r.disc = { x: C.x + RING_R * Math.cos(r.angle), y: C.y + RING_R * Math.sin(r.angle) }
-    discByRes[r.residue] = r.disc
   })
-  links.forEach((r) => { r.disc = discByRes[r.residue] || { x: C.x, y: C.y } })
 
   // per-type interaction counts (shown in the legend) so the 2D's numbers are
   // explicit and always match the 3D viewer and the side-panel list.
@@ -163,8 +151,8 @@ export default function InteractionMap2D({ ligand = 'Ligand', pose = 1, affinity
 
             <ellipse cx={C.x} cy={C.y} rx="150" ry="112" fill="url(#ligHalo)" />
 
-            {/* connectors + distance pills — one per bond */}
-            {links.map((r, i) => {
+            {/* connectors + distance pills — one line per bond, each to its own sphere */}
+            {nodes.map((r, i) => {
               const d = dir(r.disc, r.anchor)
               const from = { x: r.disc.x + d.x * DISC_R, y: r.disc.y + d.y * DISC_R }
               const to = { x: r.anchor.x - d.x * 6, y: r.anchor.y - d.y * 6 }
@@ -199,19 +187,13 @@ export default function InteractionMap2D({ ligand = 'Ligand', pose = 1, affinity
             {hasStruct ? <Molecule atomById={atomById} bonds={ligand2d.bonds} rings={rings} />
               : <g><circle cx={C.x} cy={C.y} r="34" fill="#ffffff" stroke="#0f766e" strokeWidth="2" strokeDasharray="4 3" /><text x={C.x} y={C.y + 4} textAnchor="middle" fontSize="11" fill="#0f766e">ligand</text></g>}
 
-            {/* residue spheres — one per residue; badge shows how many bonds it makes */}
+            {/* interaction spheres — one per bond, coloured by interaction type */}
             {nodes.map((r, i) => (
               <g key={`s${i}`}>
                 <circle cx={r.disc.x} cy={r.disc.y} r={DISC_R + 5} fill={r.t.glow} opacity="0.28" filter="url(#ddsGlow)" />
                 <circle cx={r.disc.x} cy={r.disc.y} r={DISC_R} fill={`url(#sph-${r.t.key})`} />
                 <ellipse cx={r.disc.x - 6} cy={r.disc.y - 7.5} rx="7" ry="4.2" fill="#ffffff" opacity="0.5" />
                 <text x={r.disc.x} y={r.disc.y + 4} textAnchor="middle" fontSize="10.5" fontWeight="700" fill="#0f172a">{r.residue}</text>
-                {r.count > 1 && !r.covalent && (
-                  <g>
-                    <circle cx={r.disc.x + DISC_R - 2} cy={r.disc.y - DISC_R + 2} r="8" fill={r.t.edge} stroke="#ffffff" strokeWidth="1.3" />
-                    <text x={r.disc.x + DISC_R - 2} y={r.disc.y - DISC_R + 5.5} textAnchor="middle" fontSize="9" fontWeight="700" fill="#ffffff">{r.count}</text>
-                  </g>
-                )}
               </g>
             ))}
 

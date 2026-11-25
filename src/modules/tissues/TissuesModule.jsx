@@ -101,7 +101,7 @@ export default function TissuesModule({ onSwitchModules }) {
           <button onClick={() => setCite(true)} className="flex w-full items-center gap-2 rounded-lg px-2.5 py-1.5 text-left text-slate-300 transition hover:bg-ink-800/70 hover:text-white">
             <QuoteIcon color={S} /><span className="text-[12px] font-medium">Cite DDS</span>
           </button>
-          <div className="mt-1.5 px-2.5 text-[10px] text-slate-600">DDS v5.1 · Tissues</div>
+          <div className="mt-1.5 px-2.5 text-[10px] text-slate-600">DDS v5.2 · Tissues</div>
         </div>
       </div>
 

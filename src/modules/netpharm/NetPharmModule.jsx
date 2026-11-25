@@ -305,7 +305,7 @@ export default function NetPharmModule({ onSwitchModules, onHandoff }) {
             <QuoteIcon className="h-4 w-4 text-violet" />
             <span className="text-[12px] font-medium">Cite DDS</span>
           </button>
-          <div className="mt-1.5 px-2.5 text-[10px] text-slate-600">DDS v5.1</div>
+          <div className="mt-1.5 px-2.5 text-[10px] text-slate-600">DDS v5.2</div>
         </div>
       </div>
 
